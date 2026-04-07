@@ -16,7 +16,9 @@ def main():
     ctk.set_default_color_theme("blue")
 
     # Launch app
-    app = MainWindow()
+    # className sets the WM_CLASS on Linux, which must match StartupWMClass
+    # in flashtool.desktop so GNOME Dock allows pinning with the correct icon.
+    app = MainWindow(className="flashtool")
     app.mainloop()
 
 

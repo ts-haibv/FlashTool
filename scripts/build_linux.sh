@@ -78,7 +78,7 @@ EOF
 cat > "$DEB_ROOT/DEBIAN/postinst" << 'EOF'
 #!/bin/bash
 if which gtk-update-icon-cache >/dev/null 2>&1; then
-    gtk-update-icon-cache -f -t /usr/share/icons/hicolor
+    gtk-update-icon-cache -f -t /usr/share/icons/hicolor || true
 fi
 echo "⚡ FlashTool installed successfully!"
 echo "  Run: flashtool"
@@ -86,19 +86,19 @@ exit 0
 EOF
 chmod 755 "$DEB_ROOT/DEBIAN/postinst"
 
-# Copy icon to hicolor apps (modern standard for Linux desktop icons)
-mkdir -p "$DEB_ROOT/usr/share/icons/hicolor/256x256/apps"
-cp "$SCRIPT_DIR/assets/icon.png" "$DEB_ROOT/usr/share/icons/hicolor/256x256/apps/flashtool.png"
+# Copy icon
+mkdir -p "$DEB_ROOT/usr/share/pixmaps"
+cp "$SCRIPT_DIR/assets/icon.png" "$DEB_ROOT/usr/share/pixmaps/flashtool.png"
 
-# Desktop entry
 cat > "$DEB_ROOT/usr/share/applications/flashtool.desktop" << EOF
 [Desktop Entry]
 Name=FlashTool
 Comment=G6 ROM Flash Tool
 Exec=flashtool
-Icon=flashtool
+Icon=/usr/share/pixmaps/flashtool.png
 Terminal=false
 Type=Application
+StartupWMClass=flashtool
 Categories=Utility;Development;
 Keywords=flash;rom;android;fastboot;adb;
 EOF

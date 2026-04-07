@@ -21,8 +21,8 @@ from flash_tool.ui.log_panel import LogPanel
 class MainWindow(ctk.CTk):
     """Main application window."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
         # ── Window Setup ──
         self.title(f"{APP_NAME} v{APP_VERSION} — G6 ROM Flash Tool")
