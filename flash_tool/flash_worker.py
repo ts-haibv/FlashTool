@@ -132,6 +132,9 @@ class FlashWorker(threading.Thread):
             self._log(f"✅ Device found: {serial}")
 
         # ── Execute command ──
+        if step.command == "fastboot" and step.args == ["flashing", "unlock"]:
+            return self._handle_unlock_step(step)
+
         cmd = self._build_command(step)
         cmd_str = " ".join(cmd)
         self._log(f"\n$ {cmd_str}")
@@ -201,6 +204,77 @@ class FlashWorker(threading.Thread):
         except Exception as e:
             self._log(f"❌ Error: {e}")
             return False
+
+    def _handle_unlock_step(self, step: FlashStep) -> bool:
+        """Handle unlock logic featuring pre-check and auto-detection."""
+        binary = FASTBOOT_PATH
+        step.status = StepStatus.RUNNING
+        step.progress = 0.0
+        start_time = time.time()
+
+        # 1. Pre-check if already unlocked
+        self._log("🔍 Checking current unlock status...")
+        try:
+            res = subprocess.run([binary, "getvar", "unlocked"], capture_output=True, text=True, timeout=5)
+            combined = (res.stdout + res.stderr).lower()
+            if "unlocked: yes" in combined:
+                self._log("✅ Bootloader already unlocked, skipping step")
+                self._emit_progress(step, "Already unlocked", "Skipping")
+                step.progress = 1.0
+                return True
+        except Exception as e:
+            self._log(f"⚠️ Failed to check unlock status: {e}")
+
+        # 2. Not unlocked, need user action
+        self._emit_progress(step, "Waiting for user action...", "Please check device screen")
+        self._log("\n⚠️ " + ("=" * 45))
+        self._log("  MANUAL ACTION REQUIRED ON DEVICE SCREEN:")
+        self._log("  ➡ Press Vol-DOWN to select 'Unlock'")
+        self._log("  ➡ Press POWER to confirm")
+        self._log("=" * 45 + "\n")
+
+        # Run unlock command
+        cmd = [binary, "flashing", "unlock"]
+        self._log(f"$ {' '.join(cmd)}")
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=step.timeout)
+            out = proc.stdout + proc.stderr
+            self._log(out)
+        except subprocess.TimeoutExpired:
+            self._log("❌ Timeout starting unlock command")
+            return False
+        except Exception as e:
+            self._log(f"❌ Error during unlock command: {e}")
+            return False
+
+        # 3. Poll until unlocked
+        self._log("⏳ Polling unlock status... (waiting for user to confirm)")
+        deadline = time.time() + 60  # wait up to 60s
+
+        while time.time() < deadline:
+            if self.stopped:
+                return False
+
+            elapsed = time.time() - start_time
+            step.elapsed = elapsed
+            self._emit_progress(step, f"Waiting for confirmation... {elapsed:.0f}s")
+
+            try:
+                res = subprocess.run([binary, "getvar", "unlocked"], capture_output=True, text=True, timeout=3)
+                combined = (res.stdout + res.stderr).lower()
+                if "unlocked: yes" in combined:
+                    self._log("✅ Bootloader unlock confirmed!")
+                    self._emit_progress(step, "Unlock confirmed")
+                    step.progress = 1.0
+                    return True
+            except Exception:
+                # Device might be rebooting or temporarily disconnected
+                pass
+
+            time.sleep(2)
+
+        self._log("❌ Timeout waiting for unlock confirmation")
+        return False
 
     def run(self):
         """Execute all steps sequentially."""
