@@ -3,11 +3,16 @@
 from flash_tool.flash_worker import FlashStep
 
 
-def build_g6_ramba_steps() -> list[FlashStep]:
-    """Build the 15-step flash profile for G6 RAMBA ROM.
+def build_g6_ramba_steps(skip_suw: bool = False) -> list[FlashStep]:
+    """Build the flash profile for G6 RAMBA ROM.
 
     Image placeholders (image_key) will be resolved against detected files
     at runtime. The image_arg_index indicates which arg[] element to replace.
+
+    Args:
+        skip_suw: When True, appends extra steps after the final reboot to
+                  mark the device as already-provisioned, bypassing the
+                  Android Setup Wizard (SUW) on first boot.
     """
     return [
         # ── Step 1: Enable OEM Unlocking ───────────────────────────────
@@ -169,6 +174,115 @@ def build_g6_ramba_steps() -> list[FlashStep]:
             id=16,
             name="Final Reboot",
             command="fastboot",
+            args=["reboot"],
+            timeout=30,
+        ),
+    ]
+    # ── Optional: Skip Setup Wizard ────────────────────────────────────────
+    if skip_suw:
+        steps += [
+            # ── Step 17: Wait for ADB after first boot ─────────────────
+            FlashStep(
+                id=17,
+                name="Wait for Device (ADB) — Post-flash Boot",
+                command="adb",
+                args=["devices"],
+                timeout=10,
+                wait_for_device_mode="adb",
+                wait_timeout=240,
+            ),
+
+            # ── Step 18: Mark device_provisioned ───────────────────────
+            FlashStep(
+                id=18,
+                name="SUW: Mark device_provisioned",
+                command="adb",
+                args=["shell", "settings", "put", "global", "device_provisioned", "1"],
+                timeout=10,
+            ),
+
+            # ── Step 19: Mark user_setup_complete ──────────────────────
+            FlashStep(
+                id=19,
+                name="SUW: Mark user_setup_complete",
+                command="adb",
+                args=["shell", "settings", "put", "secure", "user_setup_complete", "1"],
+                timeout=10,
+            ),
+
+            # ── Step 20: Mark setup_wizard_has_run ─────────────────────
+            FlashStep(
+                id=20,
+                name="SUW: Mark setup_wizard_has_run",
+                command="adb",
+                args=["shell", "settings", "put", "secure", "setup_wizard_has_run", "1"],
+                timeout=10,
+            ),
+
+            # ── Step 21: Final reboot to apply provisioning ─────────────
+            FlashStep(
+                id=21,
+                name="SUW: Reboot to apply provisioning",
+                command="adb",
+                args=["reboot"],
+                timeout=30,
+            ),
+        ]
+
+    return steps
+
+
+def build_suw_only_steps() -> list[FlashStep]:
+    """Build a standalone step list that only skips the Android Setup Wizard.
+
+    Run this independently (no ROM required) when the device is already booted
+    and connected via ADB. Executes the three provisioning settings puts then
+    reboots so the changes take effect.
+    """
+    return [
+        # ── Step 1: Wait for ADB ───────────────────────────────────────
+        FlashStep(
+            id=1,
+            name="Wait for Device (ADB)",
+            command="adb",
+            args=["devices"],
+            timeout=10,
+            wait_for_device_mode="adb",
+            wait_timeout=60,
+        ),
+
+        # ── Step 2: Mark device_provisioned ───────────────────────────
+        FlashStep(
+            id=2,
+            name="SUW: Mark device_provisioned",
+            command="adb",
+            args=["shell", "settings", "put", "global", "device_provisioned", "1"],
+            timeout=10,
+        ),
+
+        # ── Step 3: Mark user_setup_complete ──────────────────────────
+        FlashStep(
+            id=3,
+            name="SUW: Mark user_setup_complete",
+            command="adb",
+            args=["shell", "settings", "put", "secure", "user_setup_complete", "1"],
+            timeout=10,
+        ),
+
+        # ── Step 4: Mark setup_wizard_has_run ─────────────────────────
+        FlashStep(
+            id=4,
+            name="SUW: Mark setup_wizard_has_run",
+            command="adb",
+            args=["shell", "settings", "put", "secure", "setup_wizard_has_run", "1"],
+            timeout=10,
+        ),
+
+        # ── Step 5: Reboot to apply provisioning ──────────────────────
+        FlashStep(
+            id=5,
+            name="SUW: Reboot to apply provisioning",
+            command="adb",
             args=["reboot"],
             timeout=30,
         ),

@@ -12,7 +12,7 @@ from flash_tool.config import (
 )
 from flash_tool.device_manager import get_device_state
 from flash_tool.flash_worker import FlashWorker, FlashProgress, StepStatus
-from flash_tool.profiles.g6_ramba import build_g6_ramba_steps
+from flash_tool.profiles.g6_ramba import build_g6_ramba_steps, build_suw_only_steps
 from flash_tool.ui.theme import COLORS, FONTS, SPACING
 from flash_tool.ui.step_widget import StepWidget
 from flash_tool.ui.log_panel import LogPanel
@@ -37,7 +37,8 @@ class MainWindow(ctk.CTk):
         self.rom_path: str = ""
         self.detected_images: dict[str, list[str]] = {}
         self.selected_images: dict[str, str] = {}
-        self.flash_steps = build_g6_ramba_steps()
+        self.skip_suw_var = ctk.BooleanVar(value=False)
+        self.flash_steps = build_g6_ramba_steps(skip_suw=False)
         self.worker: FlashWorker | None = None
         self.step_widgets: dict[int, StepWidget] = {}
         self.image_combos: dict[str, ctk.CTkComboBox] = {}
@@ -230,12 +231,52 @@ class MainWindow(ctk.CTk):
             )
             btn.pack(side="right", padx=(SPACING["xs"], 0))
 
-        # ── Info Section ──
+        # ── Options Section ──
         divider2 = ctk.CTkFrame(sidebar, fg_color=COLORS["border"], height=1)
         divider2.pack(fill="x", padx=SPACING["md"], pady=SPACING["md"])
 
+        ctk.CTkLabel(
+            sidebar,
+            text="⚙️  Options",
+            font=FONTS["heading_sm"],
+            text_color=COLORS["text_primary"],
+            anchor="w",
+        ).pack(fill="x", padx=SPACING["md"])
+
+        options_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
+        options_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
+
+        suw_row = ctk.CTkFrame(options_frame, fg_color="transparent")
+        suw_row.pack(fill="x", padx=SPACING["sm"], pady=SPACING["sm"])
+
+        self.suw_checkbox = ctk.CTkCheckBox(
+            suw_row,
+            text="Skip Setup Wizard (SUW)",
+            font=FONTS["body_sm"],
+            text_color=COLORS["text_primary"],
+            fg_color=COLORS["accent_blue"],
+            hover_color="#4a70d4",
+            checkmark_color=COLORS["text_primary"],
+            variable=self.skip_suw_var,
+            command=self._on_suw_toggle,
+        )
+        self.suw_checkbox.pack(side="left")
+
+        ctk.CTkLabel(
+            options_frame,
+            text="Marks device as provisioned via ADB\nafter first boot — bypasses Android SUW",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+
+        # ── Info Section ──
+        divider3 = ctk.CTkFrame(sidebar, fg_color=COLORS["border"], height=1)
+        divider3.pack(fill="x", padx=SPACING["md"], pady=SPACING["md"])
+
         info_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
-        info_frame.pack(fill="x", padx=SPACING["md"], pady=(0, SPACING["md"]))
+        info_frame.pack(fill="x", padx=SPACING["md"], pady=(0, SPACING["sm"]))
 
         ctk.CTkLabel(
             info_frame,
@@ -280,15 +321,15 @@ class MainWindow(ctk.CTk):
             anchor="w",
         ).pack(fill="x", pady=(0, SPACING["sm"]))
 
-        steps_scroll = ctk.CTkScrollableFrame(
+        self.steps_scroll = ctk.CTkScrollableFrame(
             steps_panel,
             fg_color="transparent",
             scrollbar_button_color=COLORS["scrollbar_fg"],
         )
-        steps_scroll.pack(fill="both", expand=True)
+        self.steps_scroll.pack(fill="both", expand=True)
 
         for step in self.flash_steps:
-            w = StepWidget(steps_scroll, step.id, step.name)
+            w = StepWidget(self.steps_scroll, step.id, step.name)
             w.pack(fill="x", pady=2)
             self.step_widgets[step.id] = w
 
@@ -303,36 +344,48 @@ class MainWindow(ctk.CTk):
     # FOOTER (Action Bar)
     # ════════════════════════════════════════════════════════════════════════
     def _build_footer(self):
-        footer = ctk.CTkFrame(self, fg_color=COLORS["bg_secondary"], corner_radius=0, height=56)
-        footer.pack(fill="x", side="bottom")
-        footer.pack_propagate(False)
+        footer = ctk.CTkFrame(self, fg_color=COLORS["bg_secondary"], corner_radius=0)
+        footer.pack(fill="x", side="bottom", ipady=SPACING["sm"])
 
         self.start_btn = ctk.CTkButton(
             footer,
             text="⚡  Start Flash",
-            font=FONTS["heading_sm"],
+            font=FONTS["heading_md"],
             fg_color=COLORS["accent_blue"],
             hover_color="#4a70d4",
-            height=40,
-            width=180,
-            corner_radius=8,
+            height=64,
+            width=210,
+            corner_radius=10,
             command=self._start_flash,
         )
-        self.start_btn.pack(side="right", padx=SPACING["lg"], pady=SPACING["sm"])
+        self.start_btn.pack(side="right", padx=SPACING["lg"])
 
         self.stop_btn = ctk.CTkButton(
             footer,
             text="⏹  Stop",
-            font=FONTS["heading_sm"],
+            font=FONTS["heading_md"],
             fg_color=COLORS["accent_red"],
             hover_color="#d44a4a",
-            height=40,
-            width=100,
-            corner_radius=8,
+            height=64,
+            width=120,
+            corner_radius=10,
             state="disabled",
             command=self._stop_flash,
         )
-        self.stop_btn.pack(side="right", padx=(0, SPACING["sm"]), pady=SPACING["sm"])
+        self.stop_btn.pack(side="right", padx=(0, SPACING["sm"]))
+
+        self.suw_btn = ctk.CTkButton(
+            footer,
+            text="🔓  Skip SUW",
+            font=FONTS["heading_md"],
+            fg_color=COLORS["accent_orange"],
+            hover_color="#c47a1e",
+            height=64,
+            width=165,
+            corner_radius=10,
+            command=self._run_suw_only,
+        )
+        self.suw_btn.pack(side="right", padx=(0, SPACING["sm"]))
 
         # Status text
         self.status_label = ctk.CTkLabel(
@@ -342,7 +395,7 @@ class MainWindow(ctk.CTk):
             text_color=COLORS["text_muted"],
             anchor="w",
         )
-        self.status_label.pack(side="left", padx=SPACING["lg"], pady=SPACING["sm"])
+        self.status_label.pack(side="left", padx=SPACING["lg"])
 
     # ════════════════════════════════════════════════════════════════════════
     # ACTIONS
@@ -458,13 +511,15 @@ class MainWindow(ctk.CTk):
         # Update UI state
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
+        self.suw_btn.configure(state="disabled")
+        self.suw_checkbox.configure(state="disabled")
         self.status_label.configure(
             text="⚡ Flashing in progress...",
             text_color=COLORS["accent_orange"],
         )
 
         # Build steps with resolved images
-        steps = build_g6_ramba_steps()
+        steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get())
 
         # Start worker
         self.worker = FlashWorker(
@@ -482,6 +537,91 @@ class MainWindow(ctk.CTk):
         if self.worker and self.worker.is_alive():
             if messagebox.askyesno("Confirm", "Stop flashing? This may leave your device in an unstable state."):
                 self.worker.stop()
+
+    def _on_suw_toggle(self):
+        """Rebuild step list when the Skip Setup Wizard checkbox is toggled."""
+        self.flash_steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get())
+        self._rebuild_step_widgets()
+
+    def _rebuild_step_widgets(self):
+        """Destroy and re-create step widgets to reflect the current step list."""
+        # Remove all existing widgets
+        for w in self.step_widgets.values():
+            w.destroy()
+        self.step_widgets.clear()
+
+        # Recreate from the updated flash_steps
+        for step in self.flash_steps:
+            w = StepWidget(self.steps_scroll, step.id, step.name)
+            w.pack(fill="x", pady=2)
+            self.step_widgets[step.id] = w
+
+    def _run_suw_only(self):
+        """Run the Skip Setup Wizard steps standalone — no ROM folder needed."""
+        if not messagebox.askyesno(
+            "Skip Setup Wizard",
+            "This will mark the connected ADB device as already provisioned\n"
+            "and reboot it, skipping the Android Setup Wizard on next boot.\n\n"
+            "Make sure the device is connected via ADB and the screen is on.\n\n"
+            "Continue?",
+        ):
+            return
+
+        # Swap step panel to show SUW-only steps
+        suw_steps = build_suw_only_steps()
+        for w in self.step_widgets.values():
+            w.destroy()
+        self.step_widgets.clear()
+        for step in suw_steps:
+            w = StepWidget(self.steps_scroll, step.id, step.name)
+            w.pack(fill="x", pady=2)
+            self.step_widgets[step.id] = w
+
+        # Lock UI
+        self.start_btn.configure(state="disabled")
+        self.suw_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        self.suw_checkbox.configure(state="disabled")
+        self.status_label.configure(
+            text="🔓 Skipping Setup Wizard...",
+            text_color=COLORS["accent_orange"],
+        )
+
+        self.worker = FlashWorker(
+            steps=suw_steps,
+            rom_path="",
+            detected_images={},
+            on_progress=self._on_flash_progress,
+            on_log=self._on_flash_log,
+            on_finished=self._on_suw_finished,
+        )
+        self.worker.start()
+
+    def _on_suw_finished(self, success: bool):
+        """Handle SUW-only run completion (called from background thread)."""
+        self.after(0, self._finish_suw, success)
+
+    def _finish_suw(self, success: bool):
+        """Restore UI after SUW-only run, then rebuild normal step list."""
+        self.start_btn.configure(state="normal")
+        self.suw_btn.configure(state="normal")
+        self.stop_btn.configure(state="disabled")
+        self.suw_checkbox.configure(state="normal")
+
+        # Restore flash step widgets
+        self._rebuild_step_widgets()
+
+        if success:
+            self.status_label.configure(
+                text="✅ Setup Wizard skipped — device is rebooting",
+                text_color=COLORS["accent_green"],
+            )
+            messagebox.showinfo("Done", "Setup Wizard skipped!\nDevice is rebooting.")
+        else:
+            self.status_label.configure(
+                text="❌ SUW skip failed or stopped",
+                text_color=COLORS["accent_red"],
+            )
 
     def _on_flash_progress(self, progress: FlashProgress):
         """Handle progress update from worker (called from background thread)."""
@@ -509,6 +649,8 @@ class MainWindow(ctk.CTk):
         """Handle flash completion in main thread."""
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
+        self.suw_btn.configure(state="normal")
+        self.suw_checkbox.configure(state="normal")
 
         if success:
             self.status_label.configure(
