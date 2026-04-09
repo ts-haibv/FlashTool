@@ -3,7 +3,7 @@
 from flash_tool.flash_worker import FlashStep
 
 
-def build_g6_ramba_steps(skip_suw: bool = False) -> list[FlashStep]:
+def build_g6_ramba_steps(skip_suw: bool = False, use_super: bool = False) -> list[FlashStep]:
     """Build the flash profile for G6 RAMBA ROM.
 
     Image placeholders (image_key) will be resolved against detected files
@@ -13,8 +13,10 @@ def build_g6_ramba_steps(skip_suw: bool = False) -> list[FlashStep]:
         skip_suw: When True, appends extra steps after the final reboot to
                   mark the device as already-provisioned, bypassing the
                   Android Setup Wizard (SUW) on first boot.
+        use_super: When True, replaces individual system/product/system_ext
+                   flashing (steps 11-13) with a single super.img flash.
     """
-    return [
+    steps = [
         # ── Step 1: Enable OEM Unlocking ───────────────────────────────
         FlashStep(
             id=1,
@@ -117,40 +119,60 @@ def build_g6_ramba_steps(skip_suw: bool = False) -> list[FlashStep]:
             wait_for_device_mode="fastboot",
             wait_timeout=120,
         ),
+    ]
 
-        # ── Step 11: Flash System ──────────────────────────────────────
-        FlashStep(
-            id=11,
-            name="Flash system.img",
-            command="fastboot",
-            args=["flash", "system", "PLACEHOLDER"],
-            timeout=600,
-            image_key="system",
-            image_arg_index=2,
-        ),
+    # ── Steps 11-13: Partition Flash Strategy ─────────────────────────────
+    if use_super:
+        # Flash the combined super partition image
+        steps += [
+            FlashStep(
+                id=11,
+                name="Flash super.img",
+                command="fastboot",
+                args=["flash", "super", "PLACEHOLDER"],
+                timeout=900,
+                image_key="super",
+                image_arg_index=2,
+            ),
+        ]
+    else:
+        # Flash individual partition images
+        steps += [
+            # ── Step 11: Flash System ──────────────────────────────────────
+            FlashStep(
+                id=11,
+                name="Flash system.img",
+                command="fastboot",
+                args=["flash", "system", "PLACEHOLDER"],
+                timeout=600,
+                image_key="system",
+                image_arg_index=2,
+            ),
 
-        # ── Step 12: Flash Product ─────────────────────────────────────
-        FlashStep(
-            id=12,
-            name="Flash product.img",
-            command="fastboot",
-            args=["flash", "product", "PLACEHOLDER"],
-            timeout=600,
-            image_key="product",
-            image_arg_index=2,
-        ),
+            # ── Step 12: Flash Product ─────────────────────────────────────
+            FlashStep(
+                id=12,
+                name="Flash product.img",
+                command="fastboot",
+                args=["flash", "product", "PLACEHOLDER"],
+                timeout=600,
+                image_key="product",
+                image_arg_index=2,
+            ),
 
-        # ── Step 13: Flash system_ext ──────────────────────────────────
-        FlashStep(
-            id=13,
-            name="Flash system_ext.img",
-            command="fastboot",
-            args=["flash", "system_ext", "PLACEHOLDER"],
-            timeout=600,
-            image_key="system_ext",
-            image_arg_index=2,
-        ),
+            # ── Step 13: Flash system_ext ──────────────────────────────────
+            FlashStep(
+                id=13,
+                name="Flash system_ext.img",
+                command="fastboot",
+                args=["flash", "system_ext", "PLACEHOLDER"],
+                timeout=600,
+                image_key="system_ext",
+                image_arg_index=2,
+            ),
+        ]
 
+    steps += [
         # ── Step 14: Erase Metadata ────────────────────────────────────
         FlashStep(
             id=14,

@@ -51,6 +51,7 @@ FASTBOOT_PATH = find_binary("fastboot") or "fastboot"
 
 # Mapping of partition name → glob pattern(s) to search for in ROM folder
 IMAGE_PATTERNS = {
+    "super": ["super.img"],
     "vbmeta": ["vbmeta*.img"],
     "system": ["system.img"],
     "product": ["product*.img"],

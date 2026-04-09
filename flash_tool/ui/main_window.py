@@ -38,7 +38,8 @@ class MainWindow(ctk.CTk):
         self.detected_images: dict[str, list[str]] = {}
         self.selected_images: dict[str, str] = {}
         self.skip_suw_var = ctk.BooleanVar(value=False)
-        self.flash_steps = build_g6_ramba_steps(skip_suw=False)
+        self.use_super = False
+        self.flash_steps = build_g6_ramba_steps(skip_suw=False, use_super=False)
         self.worker: FlashWorker | None = None
         self.step_widgets: dict[int, StepWidget] = {}
         self.image_combos: dict[str, ctk.CTkComboBox] = {}
@@ -46,10 +47,11 @@ class MainWindow(ctk.CTk):
         # Device polling
         self._poll_running = True
 
-        # Build UI
+        # Build UI — footer must be packed before body so that pack's expand
+        # doesn't let the body claim all vertical space before the footer lands.
         self._build_header()
-        self._build_body()
         self._build_footer()
+        self._build_body()
 
         # Start device polling
         self._poll_device()
@@ -179,6 +181,7 @@ class MainWindow(ctk.CTk):
 
         # Build image selectors for each partition
         partitions = [
+            ("super", "super.img"),
             ("vbmeta", "vbmeta*.img"),
             ("system", "system.img"),
             ("product", "product*.img"),
@@ -270,6 +273,27 @@ class MainWindow(ctk.CTk):
             anchor="w",
             justify="left",
         ).pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+
+        # ── Flash Strategy Indicator ──
+        strategy_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
+        strategy_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
+
+        ctk.CTkLabel(
+            strategy_frame,
+            text="⚡  Flash Strategy",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+        ).pack(fill="x", padx=SPACING["sm"], pady=(SPACING["sm"], 0))
+
+        self.strategy_label = ctk.CTkLabel(
+            strategy_frame,
+            text="📦  system + product + system_ext",
+            font=FONTS["body_sm"],
+            text_color=COLORS["text_secondary"],
+            anchor="w",
+        )
+        self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
 
         # ── Info Section ──
         divider3 = ctk.CTkFrame(sidebar, fg_color=COLORS["border"], height=1)
@@ -369,10 +393,10 @@ class MainWindow(ctk.CTk):
             height=64,
             width=120,
             corner_radius=10,
-            state="disabled",
             command=self._stop_flash,
         )
-        self.stop_btn.pack(side="right", padx=(0, SPACING["sm"]))
+        # stop_btn is hidden on startup; shown only while flashing
+        self._stop_btn_pack_opts = {"side": "right", "padx": (0, SPACING["sm"])}
 
         self.suw_btn = ctk.CTkButton(
             footer,
@@ -420,6 +444,7 @@ class MainWindow(ctk.CTk):
                 self.log_panel.append(f"  ✅ {partition}: {', '.join(files)}")
             else:
                 self.log_panel.append(f"  ⚠️  {partition}: not found")
+        self._update_super_strategy()
 
     def _update_image_combos(self):
         """Update combo boxes with detected images."""
@@ -438,6 +463,10 @@ class MainWindow(ctk.CTk):
         """Handle image combo selection."""
         if value != "— not detected —":
             self.selected_images[key] = value
+        else:
+            self.selected_images.pop(key, None)
+        if key == "super":
+            self._update_super_strategy()
 
     def _browse_image(self, key: str):
         """Manual image file selection."""
@@ -464,6 +493,8 @@ class MainWindow(ctk.CTk):
         combo.set(rel)
         self.selected_images[key] = rel
         self.log_panel.append(f"📂 Manual selection: {key} = {rel}")
+        if key == "super":
+            self._update_super_strategy()
 
     def _start_flash(self):
         """Validate and start the flash process."""
@@ -472,9 +503,13 @@ class MainWindow(ctk.CTk):
             messagebox.showerror("Error", "Please select a valid ROM folder first.")
             return
 
-        # Validate required images
-        required = ["system"]  # system.img is always required
-        optional_with_steps = ["vbmeta", "product", "system_ext"]
+        # Validate required images based on flash strategy
+        if self.use_super:
+            required = ["super"]
+            optional_with_steps = ["vbmeta"]
+        else:
+            required = ["system"]  # system.img is always required
+            optional_with_steps = ["vbmeta", "product", "system_ext"]
 
         for key in required:
             if key not in self.selected_images:
@@ -508,9 +543,9 @@ class MainWindow(ctk.CTk):
         for w in self.step_widgets.values():
             w.update_status("pending")
 
-        # Update UI state
-        self.start_btn.configure(state="disabled")
-        self.stop_btn.configure(state="normal")
+        # Update UI state — swap Start → Stop
+        self.start_btn.pack_forget()
+        self.stop_btn.pack(**self._stop_btn_pack_opts)
         self.suw_btn.configure(state="disabled")
         self.suw_checkbox.configure(state="disabled")
         self.status_label.configure(
@@ -519,7 +554,7 @@ class MainWindow(ctk.CTk):
         )
 
         # Build steps with resolved images
-        steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get())
+        steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get(), use_super=self.use_super)
 
         # Start worker
         self.worker = FlashWorker(
@@ -540,7 +575,7 @@ class MainWindow(ctk.CTk):
 
     def _on_suw_toggle(self):
         """Rebuild step list when the Skip Setup Wizard checkbox is toggled."""
-        self.flash_steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get())
+        self.flash_steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get(), use_super=self.use_super)
         self._rebuild_step_widgets()
 
     def _rebuild_step_widgets(self):
@@ -555,6 +590,35 @@ class MainWindow(ctk.CTk):
             w = StepWidget(self.steps_scroll, step.id, step.name)
             w.pack(fill="x", pady=2)
             self.step_widgets[step.id] = w
+
+    def _update_super_strategy(self):
+        """Detect super.img selection and switch flash strategy automatically."""
+        super_combo = self.image_combos.get("super")
+        new_use_super = (
+            super_combo is not None
+            and super_combo.get() != "— not detected —"
+        )
+        strategy_changed = new_use_super != self.use_super
+        self.use_super = new_use_super
+        self.flash_steps = build_g6_ramba_steps(
+            skip_suw=self.skip_suw_var.get(),
+            use_super=self.use_super,
+        )
+        self._rebuild_step_widgets()
+        if self.use_super:
+            self.strategy_label.configure(
+                text="⚡  super.img (combined partition)",
+                text_color=COLORS["accent_green"],
+            )
+            if strategy_changed:
+                self.log_panel.append("⚡ super.img detected — switching to super flash strategy")
+        else:
+            self.strategy_label.configure(
+                text="📦  system + product + system_ext",
+                text_color=COLORS["text_secondary"],
+            )
+            if strategy_changed:
+                self.log_panel.append("📦 super.img deselected — reverting to individual partition strategy")
 
     def _run_suw_only(self):
         """Run the Skip Setup Wizard steps standalone — no ROM folder needed."""
@@ -577,10 +641,10 @@ class MainWindow(ctk.CTk):
             w.pack(fill="x", pady=2)
             self.step_widgets[step.id] = w
 
-        # Lock UI
-        self.start_btn.configure(state="disabled")
+        # Lock UI — swap Start → Stop
+        self.start_btn.pack_forget()
+        self.stop_btn.pack(**self._stop_btn_pack_opts)
         self.suw_btn.configure(state="disabled")
-        self.stop_btn.configure(state="normal")
         self.suw_checkbox.configure(state="disabled")
         self.status_label.configure(
             text="🔓 Skipping Setup Wizard...",
@@ -603,9 +667,9 @@ class MainWindow(ctk.CTk):
 
     def _finish_suw(self, success: bool):
         """Restore UI after SUW-only run, then rebuild normal step list."""
-        self.start_btn.configure(state="normal")
+        self.stop_btn.pack_forget()
+        self.start_btn.pack(side="right", padx=SPACING["lg"])
         self.suw_btn.configure(state="normal")
-        self.stop_btn.configure(state="disabled")
         self.suw_checkbox.configure(state="normal")
 
         # Restore flash step widgets
@@ -647,8 +711,8 @@ class MainWindow(ctk.CTk):
 
     def _finish_flash(self, success: bool):
         """Handle flash completion in main thread."""
-        self.start_btn.configure(state="normal")
-        self.stop_btn.configure(state="disabled")
+        self.stop_btn.pack_forget()
+        self.start_btn.pack(side="right", padx=SPACING["lg"])
         self.suw_btn.configure(state="normal")
         self.suw_checkbox.configure(state="normal")
 
