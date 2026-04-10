@@ -1,18 +1,18 @@
-"""Step widget — displays a single flash step with progress."""
+"""Step widget — displays a single flash step with progress and timing."""
 
 import customtkinter as ctk
 from flash_tool.ui.theme import COLORS, FONTS, SPACING, STATUS_CONFIG
 
 
 class StepWidget(ctk.CTkFrame):
-    """A card representing one flash step with icon, name, progress bar, and status."""
+    """A card representing one flash step with icon, name, progress bar, status and elapsed time."""
 
     def __init__(self, master, step_id: int, step_name: str, **kwargs):
         super().__init__(
             master,
             fg_color=COLORS["bg_secondary"],
             corner_radius=8,
-            height=52,
+            height=56,
             **kwargs,
         )
         self.step_id = step_id
@@ -30,7 +30,7 @@ class StepWidget(ctk.CTkFrame):
             text_color=COLORS["text_muted"],
             width=36,
         )
-        self.id_label.grid(row=0, column=0, padx=(SPACING["sm"], 0), pady=SPACING["sm"])
+        self.id_label.grid(row=0, column=0, padx=(SPACING["sm"], 0), pady=(SPACING["xs"], 0))
 
         # Step name
         self.name_label = ctk.CTkLabel(
@@ -40,18 +40,29 @@ class StepWidget(ctk.CTkFrame):
             text_color=COLORS["text_primary"],
             anchor="w",
         )
-        self.name_label.grid(row=0, column=1, padx=SPACING["sm"], pady=SPACING["sm"], sticky="w")
+        self.name_label.grid(row=0, column=1, padx=SPACING["sm"], pady=(SPACING["xs"], 0), sticky="w")
 
-        # Status label
+        # Status + time label (right column)
         self.status_label = ctk.CTkLabel(
             self,
             text="⏳ Pending",
             font=FONTS["caption"],
             text_color=COLORS["status_pending"],
-            width=100,
+            width=120,
             anchor="e",
         )
-        self.status_label.grid(row=0, column=2, padx=SPACING["sm"], pady=SPACING["sm"], sticky="e")
+        self.status_label.grid(row=0, column=2, padx=SPACING["sm"], pady=(SPACING["xs"], 0), sticky="e")
+
+        # Elapsed time label (shown under status when done)
+        self.time_label = ctk.CTkLabel(
+            self,
+            text="",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="e",
+            width=120,
+        )
+        self.time_label.grid(row=1, column=2, padx=SPACING["sm"], pady=(0, SPACING["xs"]), sticky="e")
 
         # Progress bar (hidden initially)
         self.progress_bar = ctk.CTkProgressBar(
@@ -61,17 +72,27 @@ class StepWidget(ctk.CTkFrame):
             progress_color=COLORS["progress_fill"],
             corner_radius=2,
         )
-        self.progress_bar.grid(row=1, column=0, columnspan=3, padx=SPACING["md"], pady=(0, 4), sticky="ew")
+        self.progress_bar.grid(row=2, column=0, columnspan=3, padx=SPACING["md"], pady=(0, 4), sticky="ew")
         self.progress_bar.set(0)
         self.progress_bar.grid_remove()  # Hidden until running
 
-    def update_status(self, status: str, progress: float = 0.0, message: str = ""):
+    def update_status(self, status: str, progress: float = 0.0, message: str = "", elapsed: float = 0.0):
         """Update the step display."""
         cfg = STATUS_CONFIG.get(status, STATUS_CONFIG["pending"])
 
         # Update status label
         display_text = f"{cfg['icon']} {message or cfg['label']}"
         self.status_label.configure(text=display_text, text_color=cfg["color"])
+
+        # Update elapsed time label
+        if status in ("running", "waiting") and elapsed > 0:
+            self.time_label.configure(text=f"⏱ {elapsed:.1f}s")
+        elif status == "success" and elapsed > 0:
+            self.time_label.configure(text=f"✓ {elapsed:.1f}s", text_color=COLORS.get("accent_green", "#4caf50"))
+        elif status == "failed" and elapsed > 0:
+            self.time_label.configure(text=f"✗ {elapsed:.1f}s", text_color=COLORS.get("accent_red", "#ef5350"))
+        else:
+            self.time_label.configure(text="")
 
         # Show/hide progress bar
         if status in ("running", "waiting"):

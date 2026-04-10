@@ -552,6 +552,18 @@ class MainWindow(ctk.CTk):
         )
         self.status_label.pack(side="left", padx=SPACING["lg"])
 
+        # Total elapsed timer
+        self.total_timer_label = ctk.CTkLabel(
+            footer,
+            text="",
+            font=FONTS["body_sm"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+        )
+        self.total_timer_label.pack(side="left", padx=(0, SPACING["md"]))
+        self._flash_start_time: float | None = None
+        self._total_timer_id = None
+
     # ════════════════════════════════════════════════════════════════════════
     # ACTIONS
     # ════════════════════════════════════════════════════════════════════════
@@ -741,6 +753,11 @@ class MainWindow(ctk.CTk):
         for w in self.step_widgets.values():
             w.update_status("pending")
 
+        # Start total timer
+        import time as _time
+        self._flash_start_time = _time.time()
+        self._tick_total_timer()
+
         # Update UI state — swap Start → Stop
         self.start_btn.pack_forget()
         self.stop_btn.pack(**self._stop_btn_pack_opts)
@@ -751,6 +768,7 @@ class MainWindow(ctk.CTk):
             text="⚡ Flashing in progress...",
             text_color=COLORS["accent_orange"],
         )
+        self.total_timer_label.configure(text="⏱ 0:00", text_color=COLORS["text_muted"])
 
         steps = self.flash_steps
 
@@ -770,6 +788,17 @@ class MainWindow(ctk.CTk):
         if self.worker and self.worker.is_alive():
             if messagebox.askyesno("Confirm", "Stop flashing? This may leave your device in an unstable state."):
                 self.worker.stop()
+
+    def _tick_total_timer(self):
+        """Tick the total elapsed timer every second while flashing."""
+        import time as _time
+        if self._flash_start_time is None:
+            return
+        elapsed = _time.time() - self._flash_start_time
+        minutes = int(elapsed) // 60
+        seconds = int(elapsed) % 60
+        self.total_timer_label.configure(text=f"⏱ {minutes}:{seconds:02d}")
+        self._total_timer_id = self.after(1000, self._tick_total_timer)
 
     def _update_flash_steps(self):
         """Update steps based on selected model and strategy."""
@@ -917,10 +946,22 @@ class MainWindow(ctk.CTk):
                 progress.status.value,
                 progress.progress,
                 progress.message,
+                elapsed=progress.elapsed,
             )
 
     def _finish_flash(self, success: bool):
         """Handle flash completion in main thread."""
+        # Stop total timer
+        import time as _time
+        if self._total_timer_id:
+            self.after_cancel(self._total_timer_id)
+            self._total_timer_id = None
+        total_elapsed = (_time.time() - self._flash_start_time) if self._flash_start_time else 0.0
+        self._flash_start_time = None
+        mins = int(total_elapsed) // 60
+        secs = int(total_elapsed) % 60
+        total_str = f"{mins}:{secs:02d}" if mins else f"{total_elapsed:.1f}s"
+
         self.stop_btn.pack_forget()
         self.start_btn.pack(side="right", padx=SPACING["lg"])
         self.suw_btn.configure(state="normal")
@@ -932,10 +973,18 @@ class MainWindow(ctk.CTk):
                 text="✅ Flash completed successfully!",
                 text_color=COLORS["accent_green"],
             )
-            messagebox.showinfo("Success", "ROM flashed successfully! Device is rebooting.")
+            self.total_timer_label.configure(
+                text=f"⏱ Total: {total_str}",
+                text_color=COLORS["accent_green"],
+            )
+            messagebox.showinfo("Success", f"ROM flashed successfully!\nTotal time: {total_str}\nDevice is rebooting.")
         else:
             self.status_label.configure(
                 text="❌ Flash failed or stopped",
+                text_color=COLORS["accent_red"],
+            )
+            self.total_timer_label.configure(
+                text=f"⏱ Stopped at: {total_str}",
                 text_color=COLORS["accent_red"],
             )
 
