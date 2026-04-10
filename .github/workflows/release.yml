@@ -63,6 +63,68 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: dist/${{ matrix.asset_name }}
 
+      - name: Build Debian Package
+        if: runner.os == 'Linux'
+        run: |
+          APP_VERSION=${GITHUB_REF_NAME#v}
+          if [[ $APP_VERSION != *.*.* ]]; then APP_VERSION="1.0.0"; fi
+          ARCH="amd64"
+          DEB_NAME="flashtool_${APP_VERSION}_${ARCH}"
+          DEB_ROOT="dist/deb_package/$DEB_NAME"
+          
+          mkdir -p "$DEB_ROOT/DEBIAN"
+          mkdir -p "$DEB_ROOT/usr/bin"
+          mkdir -p "$DEB_ROOT/usr/share/applications"
+          mkdir -p "$DEB_ROOT/usr/share/pixmaps"
+          
+          cp "dist/${{ matrix.asset_name }}" "$DEB_ROOT/usr/bin/flashtool"
+          chmod 755 "$DEB_ROOT/usr/bin/flashtool"
+          cp "assets/icon.png" "$DEB_ROOT/usr/share/pixmaps/flashtool.png"
+          
+          cat > "$DEB_ROOT/DEBIAN/control" << EOF
+          Package: flashtool
+          Version: $APP_VERSION
+          Section: utils
+          Priority: optional
+          Architecture: $ARCH
+          Depends: android-tools-adb, android-tools-fastboot
+          Maintainer: FlashTool <flashtool@local>
+          Description: G6 ROM Flash Tool
+           Cross-platform desktop application for flashing ROM images
+           onto G6 (RAMBA) devices. Features auto-detection of image files,
+           real-time progress tracking, and a modern dark UI.
+          Homepage: https://github.com/flashtool
+          EOF
+          
+          cat > "$DEB_ROOT/DEBIAN/postinst" << 'EOF'
+          #!/bin/bash
+          if which gtk-update-icon-cache >/dev/null 2>&1; then
+              gtk-update-icon-cache -f -t /usr/share/icons/hicolor || true
+          fi
+          exit 0
+          EOF
+          chmod 755 "$DEB_ROOT/DEBIAN/postinst"
+          
+          cat > "$DEB_ROOT/usr/share/applications/flashtool.desktop" << EOF
+          [Desktop Entry]
+          Name=FlashTool
+          Comment=G6 ROM Flash Tool
+          Exec=flashtool
+          Icon=/usr/share/pixmaps/flashtool.png
+          Terminal=false
+          Type=Application
+          Categories=Utility;Development;
+          EOF
+          
+          dpkg-deb --build "$DEB_ROOT" "dist/$DEB_NAME.deb"
+
+      - name: Upload Debian Artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlashTool-Debian
+          path: dist/*.deb
+
   release:
     name: Create Release
     needs: build
@@ -86,11 +148,18 @@ jobs:
           name: FlashTool-Windows
           path: dist/
 
+      - name: Download Debian Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FlashTool-Debian
+          path: dist/
+          
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/FlashTool-Linux
             dist/FlashTool-Windows.exe
+            dist/*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
