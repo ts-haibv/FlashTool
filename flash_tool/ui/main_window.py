@@ -13,6 +13,7 @@ from flash_tool.config import (
 from flash_tool.device_manager import get_device_state
 from flash_tool.flash_worker import FlashWorker, FlashProgress, StepStatus
 from flash_tool.profiles.g6_ramba import build_g6_ramba_steps, build_suw_only_steps
+from flash_tool.profiles.other_model import build_other_model_steps
 from flash_tool.ui.theme import COLORS, FONTS, SPACING
 from flash_tool.ui.step_widget import StepWidget
 from flash_tool.ui.log_panel import LogPanel
@@ -34,12 +35,17 @@ class MainWindow(ctk.CTk):
         self._set_icon()
 
         # State
+        self.current_model = ctk.StringVar(value="G6")
+        self.MODEL_PARTITIONS = {
+            "G6": ["super", "vbmeta", "system", "product", "system_ext"],
+            "Other Model": ["boot", "dtbo", "init_boot", "vbmeta", "recovery", "system", "system_ext", "vendor", "product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"],
+        }
         self.rom_path: str = ""
         self.detected_images: dict[str, list[str]] = {}
         self.selected_images: dict[str, str] = {}
         self.skip_suw_var = ctk.BooleanVar(value=False)
         self.use_super = False
-        self.flash_steps = build_g6_ramba_steps(skip_suw=False, use_super=False)
+        self.flash_steps = []
         self.worker: FlashWorker | None = None
         self.step_widgets: dict[int, StepWidget] = {}
         self.image_combos: dict[str, ctk.CTkComboBox] = {}
@@ -52,6 +58,8 @@ class MainWindow(ctk.CTk):
         self._build_header()
         self._build_footer()
         self._build_body()
+        
+        self._update_flash_steps()
 
         # Start device polling
         self._poll_device()
@@ -121,6 +129,38 @@ class MainWindow(ctk.CTk):
         sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.grid_propagate(False)
 
+        # ── Model Selection Section ──
+        section_model = ctk.CTkFrame(sidebar, fg_color="transparent")
+        section_model.pack(fill="x", padx=SPACING["md"], pady=(SPACING["lg"], 0))
+
+        ctk.CTkLabel(
+            section_model,
+            text="📱  Model Selection",
+            font=FONTS["heading_sm"],
+            text_color=COLORS["text_primary"],
+            anchor="w",
+        ).pack(fill="x")
+
+        self.model_combo = ctk.CTkComboBox(
+            section_model,
+            values=["G6", "Other Model"],
+            variable=self.current_model,
+            font=FONTS["body_sm"],
+            dropdown_font=FONTS["body_sm"],
+            fg_color=COLORS["bg_input"],
+            border_color=COLORS["border"],
+            button_color=COLORS["bg_hover"],
+            button_hover_color=COLORS["accent_blue"],
+            text_color=COLORS["text_primary"],
+            dropdown_fg_color=COLORS["bg_tertiary"],
+            dropdown_text_color=COLORS["text_primary"],
+            dropdown_hover_color=COLORS["bg_hover"],
+            height=34,
+            state="readonly",
+            command=self._on_model_changed,
+        )
+        self.model_combo.pack(fill="x", pady=(SPACING["sm"], 0))
+
         # ── ROM Folder Section ──
         section_rom = ctk.CTkFrame(sidebar, fg_color="transparent")
         section_rom.pack(fill="x", padx=SPACING["md"], pady=(SPACING["lg"], SPACING["sm"]))
@@ -179,16 +219,111 @@ class MainWindow(ctk.CTk):
         )
         self.images_frame.pack(fill="both", expand=True, padx=SPACING["md"], pady=(SPACING["sm"], SPACING["md"]))
 
-        # Build image selectors for each partition
-        partitions = [
-            ("super", "super.img"),
-            ("vbmeta", "vbmeta*.img"),
-            ("system", "system.img"),
-            ("product", "product*.img"),
-            ("system_ext", "system_ext*.img"),
-        ]
+        self._build_image_selectors()
 
-        for key, pattern in partitions:
+        # ── Options Section ──
+        divider2 = ctk.CTkFrame(sidebar, fg_color=COLORS["border"], height=1)
+        divider2.pack(fill="x", padx=SPACING["md"], pady=SPACING["md"])
+
+        ctk.CTkLabel(
+            sidebar,
+            text="⚙️  Options",
+            font=FONTS["heading_sm"],
+            text_color=COLORS["text_primary"],
+            anchor="w",
+        ).pack(fill="x", padx=SPACING["md"])
+
+        options_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
+        options_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
+
+        suw_row = ctk.CTkFrame(options_frame, fg_color="transparent")
+        suw_row.pack(fill="x", padx=SPACING["sm"], pady=SPACING["sm"])
+
+        self.suw_checkbox = ctk.CTkCheckBox(
+            suw_row,
+            text="Skip Setup Wizard (SUW)",
+            font=FONTS["body_sm"],
+            text_color=COLORS["text_primary"],
+            fg_color=COLORS["accent_blue"],
+            hover_color="#4a70d4",
+            checkmark_color=COLORS["text_primary"],
+            variable=self.skip_suw_var,
+            command=self._on_suw_toggle,
+        )
+        self.suw_checkbox.pack(side="left")
+
+        ctk.CTkLabel(
+            options_frame,
+            text="Marks device as provisioned via ADB\nafter first boot — bypasses Android SUW",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+
+        # ── Flash Strategy Indicator ──
+        self.strategy_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
+        self.strategy_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
+
+        ctk.CTkLabel(
+            self.strategy_frame,
+            text="⚡  Flash Strategy",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+        ).pack(fill="x", padx=SPACING["sm"], pady=(SPACING["sm"], 0))
+
+        self.strategy_label = ctk.CTkLabel(
+            self.strategy_frame,
+            text="📦  system + product + system_ext",
+            font=FONTS["body_sm"],
+            text_color=COLORS["text_secondary"],
+            anchor="w",
+        )
+        self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+
+        # ── Info Section ──
+        divider3 = ctk.CTkFrame(sidebar, fg_color=COLORS["border"], height=1)
+        divider3.pack(fill="x", padx=SPACING["md"], pady=SPACING["md"])
+
+        info_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
+        info_frame.pack(fill="x", padx=SPACING["md"], pady=(0, SPACING["sm"]))
+
+        ctk.CTkLabel(
+            info_frame,
+            text="ℹ️  Tool Paths",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+        ).pack(fill="x", padx=SPACING["sm"], pady=(SPACING["sm"], 0))
+
+        ctk.CTkLabel(
+            info_frame,
+            text=f"adb: {ADB_PATH}",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+        ).pack(fill="x", padx=SPACING["sm"])
+
+        ctk.CTkLabel(
+            info_frame,
+            text=f"fastboot: {FASTBOOT_PATH}",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+        ).pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+        
+    def _build_image_selectors(self):
+        # Clear existing
+        for widget in self.images_frame.winfo_children():
+            widget.destroy()
+        self.image_combos.clear()
+        self.selected_images.clear()
+
+        # Build image selectors for each partition
+        partitions = self.MODEL_PARTITIONS[self.current_model.get()]
+
+        for key in partitions:
             row = ctk.CTkFrame(self.images_frame, fg_color="transparent")
             row.pack(fill="x", pady=SPACING["xs"])
 
@@ -234,97 +369,21 @@ class MainWindow(ctk.CTk):
             )
             btn.pack(side="right", padx=(SPACING["xs"], 0))
 
-        # ── Options Section ──
-        divider2 = ctk.CTkFrame(sidebar, fg_color=COLORS["border"], height=1)
-        divider2.pack(fill="x", padx=SPACING["md"], pady=SPACING["md"])
+        if self.detected_images:
+            self._update_image_combos()
 
-        ctk.CTkLabel(
-            sidebar,
-            text="⚙️  Options",
-            font=FONTS["heading_sm"],
-            text_color=COLORS["text_primary"],
-            anchor="w",
-        ).pack(fill="x", padx=SPACING["md"])
-
-        options_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
-        options_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
-
-        suw_row = ctk.CTkFrame(options_frame, fg_color="transparent")
-        suw_row.pack(fill="x", padx=SPACING["sm"], pady=SPACING["sm"])
-
-        self.suw_checkbox = ctk.CTkCheckBox(
-            suw_row,
-            text="Skip Setup Wizard (SUW)",
-            font=FONTS["body_sm"],
-            text_color=COLORS["text_primary"],
-            fg_color=COLORS["accent_blue"],
-            hover_color="#4a70d4",
-            checkmark_color=COLORS["text_primary"],
-            variable=self.skip_suw_var,
-            command=self._on_suw_toggle,
-        )
-        self.suw_checkbox.pack(side="left")
-
-        ctk.CTkLabel(
-            options_frame,
-            text="Marks device as provisioned via ADB\nafter first boot — bypasses Android SUW",
-            font=FONTS["caption"],
-            text_color=COLORS["text_muted"],
-            anchor="w",
-            justify="left",
-        ).pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
-
-        # ── Flash Strategy Indicator ──
-        strategy_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
-        strategy_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
-
-        ctk.CTkLabel(
-            strategy_frame,
-            text="⚡  Flash Strategy",
-            font=FONTS["caption"],
-            text_color=COLORS["text_muted"],
-            anchor="w",
-        ).pack(fill="x", padx=SPACING["sm"], pady=(SPACING["sm"], 0))
-
-        self.strategy_label = ctk.CTkLabel(
-            strategy_frame,
-            text="📦  system + product + system_ext",
-            font=FONTS["body_sm"],
-            text_color=COLORS["text_secondary"],
-            anchor="w",
-        )
-        self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
-
-        # ── Info Section ──
-        divider3 = ctk.CTkFrame(sidebar, fg_color=COLORS["border"], height=1)
-        divider3.pack(fill="x", padx=SPACING["md"], pady=SPACING["md"])
-
-        info_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
-        info_frame.pack(fill="x", padx=SPACING["md"], pady=(0, SPACING["sm"]))
-
-        ctk.CTkLabel(
-            info_frame,
-            text="ℹ️  Tool Paths",
-            font=FONTS["caption"],
-            text_color=COLORS["text_muted"],
-            anchor="w",
-        ).pack(fill="x", padx=SPACING["sm"], pady=(SPACING["sm"], 0))
-
-        ctk.CTkLabel(
-            info_frame,
-            text=f"adb: {ADB_PATH}",
-            font=FONTS["caption"],
-            text_color=COLORS["text_muted"],
-            anchor="w",
-        ).pack(fill="x", padx=SPACING["sm"])
-
-        ctk.CTkLabel(
-            info_frame,
-            text=f"fastboot: {FASTBOOT_PATH}",
-            font=FONTS["caption"],
-            text_color=COLORS["text_muted"],
-            anchor="w",
-        ).pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+    def _on_model_changed(self, choice: str):
+        self._build_image_selectors()
+        
+        if self.current_model.get() == "G6":
+            self.strategy_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
+            self._update_super_strategy()
+        else:
+            self.use_super = False
+            self.strategy_frame.pack_forget()
+            
+        self._update_flash_steps()
+        self.log_panel.append(f"📱 Switched model profile to: {choice}")
 
     def _build_center(self, parent):
         center = ctk.CTkFrame(parent, fg_color="transparent")
@@ -504,12 +563,16 @@ class MainWindow(ctk.CTk):
             return
 
         # Validate required images based on flash strategy
-        if self.use_super:
-            required = ["super"]
-            optional_with_steps = ["vbmeta"]
+        if self.current_model.get() == "G6":
+            if self.use_super:
+                required = ["super"]
+                optional_with_steps = ["vbmeta"]
+            else:
+                required = ["system"]  # system.img is always required
+                optional_with_steps = ["vbmeta", "product", "system_ext"]
         else:
-            required = ["system"]  # system.img is always required
-            optional_with_steps = ["vbmeta", "product", "system_ext"]
+            required = ["boot", "system", "vendor"]
+            optional_with_steps = ["dtbo", "init_boot", "vbmeta", "recovery", "system_ext", "product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"]
 
         for key in required:
             if key not in self.selected_images:
@@ -548,13 +611,13 @@ class MainWindow(ctk.CTk):
         self.stop_btn.pack(**self._stop_btn_pack_opts)
         self.suw_btn.configure(state="disabled")
         self.suw_checkbox.configure(state="disabled")
+        self.model_combo.configure(state="disabled")
         self.status_label.configure(
             text="⚡ Flashing in progress...",
             text_color=COLORS["accent_orange"],
         )
 
-        # Build steps with resolved images
-        steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get(), use_super=self.use_super)
+        steps = self.flash_steps
 
         # Start worker
         self.worker = FlashWorker(
@@ -573,10 +636,17 @@ class MainWindow(ctk.CTk):
             if messagebox.askyesno("Confirm", "Stop flashing? This may leave your device in an unstable state."):
                 self.worker.stop()
 
+    def _update_flash_steps(self):
+        """Update steps based on selected model and strategy."""
+        if self.current_model.get() == "G6":
+            self.flash_steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get(), use_super=self.use_super)
+        else:
+            self.flash_steps = build_other_model_steps(skip_suw=self.skip_suw_var.get())
+        self._rebuild_step_widgets()
+
     def _on_suw_toggle(self):
         """Rebuild step list when the Skip Setup Wizard checkbox is toggled."""
-        self.flash_steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get(), use_super=self.use_super)
-        self._rebuild_step_widgets()
+        self._update_flash_steps()
 
     def _rebuild_step_widgets(self):
         """Destroy and re-create step widgets to reflect the current step list."""
@@ -600,11 +670,7 @@ class MainWindow(ctk.CTk):
         )
         strategy_changed = new_use_super != self.use_super
         self.use_super = new_use_super
-        self.flash_steps = build_g6_ramba_steps(
-            skip_suw=self.skip_suw_var.get(),
-            use_super=self.use_super,
-        )
-        self._rebuild_step_widgets()
+        self._update_flash_steps()
         if self.use_super:
             self.strategy_label.configure(
                 text="⚡  super.img (combined partition)",
@@ -646,6 +712,7 @@ class MainWindow(ctk.CTk):
         self.stop_btn.pack(**self._stop_btn_pack_opts)
         self.suw_btn.configure(state="disabled")
         self.suw_checkbox.configure(state="disabled")
+        self.model_combo.configure(state="disabled")
         self.status_label.configure(
             text="🔓 Skipping Setup Wizard...",
             text_color=COLORS["accent_orange"],
@@ -671,6 +738,7 @@ class MainWindow(ctk.CTk):
         self.start_btn.pack(side="right", padx=SPACING["lg"])
         self.suw_btn.configure(state="normal")
         self.suw_checkbox.configure(state="normal")
+        self.model_combo.configure(state="readonly")
 
         # Restore flash step widgets
         self._rebuild_step_widgets()
@@ -715,6 +783,7 @@ class MainWindow(ctk.CTk):
         self.start_btn.pack(side="right", padx=SPACING["lg"])
         self.suw_btn.configure(state="normal")
         self.suw_checkbox.configure(state="normal")
+        self.model_combo.configure(state="readonly")
 
         if success:
             self.status_label.configure(

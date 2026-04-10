@@ -19,6 +19,7 @@ a = Analysis(
         'flash_tool.flash_worker',
         'flash_tool.profiles',
         'flash_tool.profiles.g6_ramba',
+        'flash_tool.profiles.other_model',
         'flash_tool.ui',
         'flash_tool.ui.theme',
         'flash_tool.ui.step_widget',

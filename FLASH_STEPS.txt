@@ -1,0 +1,71 @@
+==============================================================
+CÁC BƯỚC FLASH ROM ANDROID (Trích xuất từ Mục 3 của Hướng dẫn)
+==============================================================
+
+# 3.1. Khởi động vào Bootloader (Fastboot Mode)
+# Gõ lệnh để chuyển điện thoại từ Home vào màn hình nạp ROM:
+adb reboot bootloader
+
+# Đợi máy vào Bootloader, sau đó kiểm tra thiết bị:
+fastboot devices
+# (Chỉ làm bước tiếp theo khi thấy hiển thị mã ID thiết bị kèm chữ "fastboot")
+
+--------------------------------------------------------------
+
+# 3.2. Mở khóa Bootloader (Chỉ làm với máy mới, chưa Unlock)
+fastboot flashing unlock
+# (Cảnh báo: Bước này sẽ xóa toàn bộ dữ liệu máy)
+# Trên điện thoại, sử dụng phím Âm lượng để chọn "Unlock" và bấm Nguồn để xác nhận.
+
+--------------------------------------------------------------
+
+# 3.3. Flash Từng Phân Vùng Lõi (.img)
+# Nạp các phân vùng cố định ban đầu:
+fastboot flash boot boot.img
+fastboot flash dtbo dtbo.img
+fastboot flash init_boot init_boot.img
+fastboot flash vbmeta vbmeta.img 
+fastboot flash recovery recovery.img
+
+--------------------------------------------------------------
+
+# 3.4. Chuyển Vào Fastbootd (Để nạp các phân vùng động/chia sẻ)
+# Dành cho Android mới (system dưới dạng dynamic):
+fastboot reboot fastboot
+
+# Nạp lần lượt các phân vùng gốc trong không gian FastbootD:
+fastboot flash system system.img
+fastboot flash system_ext system_ext.img
+fastboot flash vendor vendor.img
+fastboot flash product product.img
+
+--------------------------------------------------------------
+
+# 3.5. Nạp Phiên Bản Theo Thị Trường / Nhà Mạng (Ví dụ dùng MN3)
+# Nếu bạn muốn flash bản của một nhà mạng cụ thể, hãy nối tiếp luôn mục này.
+# VẪN ĐANG Ở FASTBOOT-D, bạn nạp chèn file của khu vực đó:
+fastboot flash product MN3/product-mn3.img
+fastboot flash userdata MN3/userdata-mn3.img
+fastboot flash vbmeta_system MN3/vbmeta_system-mn3.img
+
+# BẮT BUỘC QUAY LẠI BOOTLOADER để nạp file mạng và cấu hình tĩnh (Modem):
+fastboot reboot bootloader
+fastboot flash modem MN3/NON-HLOS.bin
+fastboot flash abl MN3/abl.elf
+fastboot flash tz MN3/tz.mbn
+
+# Lưu ý: Thay "MN3" bằng "PDN3", "TEN3"... tương ứng với tệp trong thư mục vùng bạn muốn nạp.
+
+--------------------------------------------------------------
+
+# 3.6. Xóa Dữ Liệu và Hoàn Tất Khởi Động
+# Xóa sạch data phiên bản cũ trước khởi động để tránh treo Logo:
+fastboot erase userdata
+# Hoặc: fastboot -w
+
+# Kết thúc tiến trình và Reboot thiết bị:
+fastboot reboot
+
+==============================================================
+CHÚC BẠN FLASH THÀNH CÔNG!
+==============================================================
