@@ -83,6 +83,25 @@ The app auto-detects images by pattern. If multiple matches exist, you can pick 
 
 ---
 
+## CI/CD Pipeline (Releases)
+
+This project uses [GitHub Actions](.github/workflows/release.yml) to automatically build standalone executables for Linux (`FlashTool-Linux`) and Windows (`FlashTool-Windows.exe`) when a release tag is pushed.
+
+### Triggering a New Release
+
+1. Verify that your newest changes are pushed to the target branch (e.g., `main`).
+2. Create and push a new Git tag following semantic versioning (it must start with `v`, e.g., `v1.0.0`):
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+3. A GitHub Action workflow named **Build Release** will start running.
+4. Once completed, navigate to the **Releases** page in your GitHub repository. The compiled binaries will be immediately available to download.
+
+*Alternatively, you can manually test compilation without making a final release by manually triggering the **Build Release** task from the GitHub **Actions** tab.*
+
+---
+
 ## License
 
 Internal tool — G6 device flashing support.
