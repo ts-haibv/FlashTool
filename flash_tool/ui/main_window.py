@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox
 from flash_tool.config import (
     APP_NAME, APP_VERSION, WINDOW_WIDTH, WINDOW_HEIGHT,
     PLATFORM_NAME, ADB_PATH, FASTBOOT_PATH,
-    scan_rom_folder, get_file_size_mb,
+    scan_rom_folder, scan_regions, get_file_size_mb,
 )
 from flash_tool.device_manager import get_device_state
 from flash_tool.flash_worker import FlashWorker, FlashProgress, StepStatus
@@ -186,6 +186,10 @@ class MainWindow(ctk.CTk):
             height=34,
         )
         self.rom_entry.pack(side="left", fill="x", expand=True, padx=(0, SPACING["sm"]))
+        
+        # Bind events so pasting or typing a path works without clicking Browse
+        self.rom_entry.bind("<Return>", lambda e: self._on_rom_entry_changed())
+        self.rom_entry.bind("<FocusOut>", lambda e: self._on_rom_entry_changed())
 
         browse_btn = ctk.CTkButton(
             rom_row,
@@ -199,6 +203,37 @@ class MainWindow(ctk.CTk):
             command=self._browse_rom,
         )
         browse_btn.pack(side="right")
+
+        # ── Variant/Region Selection ──
+        self.region_row = ctk.CTkFrame(section_rom, fg_color="transparent")
+        
+        ctk.CTkLabel(
+            self.region_row,
+            text="Variant:",
+            font=FONTS["body_sm"],
+            text_color=COLORS["text_secondary"],
+            width=60,
+            anchor="w",
+        ).pack(side="left")
+
+        self.region_combo = ctk.CTkComboBox(
+            self.region_row,
+            values=["— none —"],
+            font=FONTS["body_sm"],
+            dropdown_font=FONTS["body_sm"],
+            fg_color=COLORS["bg_input"],
+            border_color=COLORS["border"],
+            button_color=COLORS["bg_hover"],
+            button_hover_color=COLORS["accent_blue"],
+            text_color=COLORS["text_primary"],
+            dropdown_fg_color=COLORS["bg_tertiary"],
+            dropdown_text_color=COLORS["text_primary"],
+            dropdown_hover_color=COLORS["bg_hover"],
+            height=28,
+            state="readonly",
+            command=self._on_region_selected,
+        )
+        self.region_combo.pack(side="left", fill="x", expand=True, padx=(SPACING["xs"], 0))
 
         # ── Detected Images Section ──
         divider1 = ctk.CTkFrame(sidebar, fg_color=COLORS["border"], height=1)
@@ -281,6 +316,31 @@ class MainWindow(ctk.CTk):
             anchor="w",
         )
         self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+        
+        self.use_fastbootd = ctk.BooleanVar(value=True)
+        self.fastbootd_checkbox = ctk.CTkCheckBox(
+            self.strategy_frame,
+            text="Use Fastbootd (Dynamic Partitions)",
+            variable=self.use_fastbootd,
+            font=FONTS["body_sm"],
+            text_color=COLORS["text_secondary"],
+            checkbox_width=18,
+            checkbox_height=18,
+            command=self._update_flash_steps
+        )
+
+        self.already_in_fastboot = ctk.BooleanVar(value=False)
+        self.fastboot_already_checkbox = ctk.CTkCheckBox(
+            self.strategy_frame,
+            text="Device already in Fastboot mode",
+            variable=self.already_in_fastboot,
+            font=FONTS["body_sm"],
+            text_color=COLORS["text_secondary"],
+            checkbox_width=18,
+            checkbox_height=18,
+            command=self._update_flash_steps
+        )
+        # Packed dynamically based on profile
 
         # ── Info Section ──
         divider3 = ctk.CTkFrame(sidebar, fg_color=COLORS["border"], height=1)
@@ -374,13 +434,25 @@ class MainWindow(ctk.CTk):
 
     def _on_model_changed(self, choice: str):
         self._build_image_selectors()
+        self._update_region_visibility()
+        
+        # Show strategy frame at all times to hold context-specific toggles/info
+        self.strategy_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
         
         if self.current_model.get() == "G6":
-            self.strategy_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
+            self.fastbootd_checkbox.pack_forget()
+            self.fastboot_already_checkbox.pack_forget()
+            self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
             self._update_super_strategy()
         else:
             self.use_super = False
-            self.strategy_frame.pack_forget()
+            self.strategy_label.pack_forget()
+            self.fastbootd_checkbox.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["xs"]))
+            self.fastboot_already_checkbox.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+            
+            if hasattr(self, "detected_regions") and self.detected_regions:
+                # Trigger variant update for Other Model
+                self._on_region_selected(self.region_combo.get())
             
         self._update_flash_steps()
         self.log_panel.append(f"📱 Switched model profile to: {choice}")
@@ -483,20 +555,55 @@ class MainWindow(ctk.CTk):
     # ════════════════════════════════════════════════════════════════════════
     # ACTIONS
     # ════════════════════════════════════════════════════════════════════════
+    def _on_rom_entry_changed(self):
+        """Triggered when the user types or pastes a path and hits Enter or leaves the text box."""
+        path = self.rom_entry.get().strip()
+        if path and os.path.exists(path) and path != getattr(self, "_last_scanned_path", ""):
+            self._scan_rom_path(path)
+
     def _browse_rom(self):
         """Open folder dialog to select ROM directory."""
         path = filedialog.askdirectory(title="Select ROM Folder")
         if not path:
             return
 
-        self.rom_path = path
         self.rom_entry.delete(0, "end")
         self.rom_entry.insert(0, path)
+        self._scan_rom_path(path)
+        
+    def _scan_rom_path(self, path: str):
+        """Perform the actual scan for images and variants given a path."""
+        self.rom_path = path
+        self._last_scanned_path = path
 
         # Scan for images
         self.detected_images = scan_rom_folder(path)
+        
+        # Scan for all subdirectories that contain actual flashing images
+        regions = set()
+        region_keys = ["product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"]
+        for key in region_keys:
+            for file_path in self.detected_images.get(key, []):
+                parts = file_path.replace("\\", "/").split("/")
+                if len(parts) > 1:
+                    regions.add(parts[0])
+                    
+        self.detected_regions = sorted(list(regions))
+        if self.detected_regions:
+            options = ["— none —"] + self.detected_regions
+            self.region_combo.configure(values=options)
+            self.region_combo.set(self.detected_regions[0])
+        else:
+            self.region_combo.configure(values=["— none —"])
+            self.region_combo.set("— none —")
+            
+        self._update_region_visibility()
+
         self._update_image_combos()
         self.log_panel.append(f"📁 ROM folder: {path}")
+
+        if self.detected_regions and self.current_model.get() == "Other Model":
+            self._on_region_selected(self.detected_regions[0])
 
         for partition, files in self.detected_images.items():
             if files:
@@ -504,6 +611,34 @@ class MainWindow(ctk.CTk):
             else:
                 self.log_panel.append(f"  ⚠️  {partition}: not found")
         self._update_super_strategy()
+
+    def _update_region_visibility(self):
+        """Show or hide the region selection row based on model and regions."""
+        if hasattr(self, "detected_regions") and self.detected_regions and self.current_model.get() == "Other Model":
+            self.region_row.pack(fill="x", pady=(SPACING["sm"], 0))
+        else:
+            self.region_row.pack_forget()
+
+    def _on_region_selected(self, choice: str):
+        """Update selected images based on region variant."""
+        if choice == "— none —":
+            return
+        
+        self.log_panel.append(f"🌍 Selected Variant: {choice}")
+        
+        region_keys = ["product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"]
+        for key in region_keys:
+            combo = self.image_combos.get(key)
+            if not combo:
+                continue
+            
+            values = combo.cget("values")
+            for val in values:
+                parts = val.replace("\\", "/").split("/")
+                if len(parts) > 1 and parts[0] == choice:
+                    combo.set(val)
+                    self.selected_images[key] = val
+                    break
 
     def _update_image_combos(self):
         """Update combo boxes with detected images."""
@@ -641,7 +776,14 @@ class MainWindow(ctk.CTk):
         if self.current_model.get() == "G6":
             self.flash_steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get(), use_super=self.use_super)
         else:
-            self.flash_steps = build_other_model_steps(skip_suw=self.skip_suw_var.get())
+            region = self.region_combo.get() if hasattr(self, "region_combo") else ""
+            has_region = bool(region and region != "— none —")
+            self.flash_steps = build_other_model_steps(
+                skip_suw=self.skip_suw_var.get(),
+                use_fastbootd=getattr(self, "use_fastbootd", ctk.BooleanVar(value=True)).get(),
+                already_in_fastboot=getattr(self, "already_in_fastboot", ctk.BooleanVar(value=False)).get(),
+                has_region=has_region,
+            )
         self._rebuild_step_widgets()
 
     def _on_suw_toggle(self):

@@ -240,6 +240,11 @@ class FlashWorker(threading.Thread):
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=step.timeout)
             out = proc.stdout + proc.stderr
             self._log(out)
+            # fastboot returns FAILED if already unlocked — treat as success
+            if "already" in out.lower() and "unlock" in out.lower():
+                self._log("✅ Device already unlocked — continuing")
+                step.progress = 1.0
+                return True
         except subprocess.TimeoutExpired:
             self._log("❌ Timeout starting unlock command")
             return False

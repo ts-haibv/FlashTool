@@ -55,16 +55,16 @@ IMAGE_PATTERNS = {
     "boot": ["boot.img"],
     "dtbo": ["dtbo.img"],
     "init_boot": ["init_boot.img"],
-    "vbmeta": ["vbmeta*.img"],
-    "recovery": ["recovery*.img"],
+    "vbmeta": ["vbmeta.img"],
+    "recovery": ["recovery.img", "recovery*.img"],
     "system": ["system.img"],
-    "system_ext": ["system_ext*.img"],
-    "vendor": ["vendor*.img"],
-    "product": ["product.img", "product_*.img", "product*.img"],
-    "product_region": ["product-*.img", "product*.img"],
-    "userdata": ["userdata*.img"],
-    "vbmeta_system": ["vbmeta_system*.img"],
-    "modem": ["NON-HLOS.bin", "modem*.img"],
+    "system_ext": ["system_ext.img", "system_ext-*.img", "system_ext*.img"],
+    "vendor": ["vendor.img", "vendor-*.img"],
+    "product": ["product.img"],                              # base root only
+    "product_region": ["product-*.img", "product*.img"],    # region subdirs
+    "userdata": ["userdata.img", "userdata-*.img", "userdata*.img"],
+    "vbmeta_system": ["vbmeta_system.img", "vbmeta_system-*.img", "vbmeta_system*.img"],
+    "modem": ["NON-HLOS.bin", "modem.img", "modem*.img"],
     "abl": ["abl.elf", "abl*.img"],
     "tz": ["tz.mbn", "tz*.img"],
 }
@@ -75,26 +75,54 @@ def scan_rom_folder(rom_path: str) -> dict[str, list[str]]:
 
     Returns a dict like:
         {
-          "vbmeta": ["EED3/vbmeta_system-eed3.img"],
-          "system": ["system.img"],
-          "product": ["EED3/product-eed3.img"],
-          "system_ext": ["system_ext-ramba.img"],
+          "vbmeta": ["vbmeta.img"],
+          "system_ext": ["system_ext-lockon.img"],
+          "product_region": ["MN3/product-mn3.img"],
         }
+    
+    Rule:
+      - "product" (base): only searched in the ROOT dir (no subdirs).
+      - "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz": 
+        searched in subdirs only.
+      - Everything else: root + subdirs.
     """
+    ROOT_ONLY = {"product", "super", "boot", "dtbo", "init_boot",
+                 "vbmeta", "recovery", "system", "system_ext", "vendor"}
+    SUBDIR_ONLY = {"product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"}
+
     results: dict[str, list[str]] = {}
 
     for partition, patterns in IMAGE_PATTERNS.items():
         found: list[str] = []
         for pattern in patterns:
-            # Search root and one level of subdirs
-            found.extend(glob.glob(os.path.join(rom_path, pattern)))
-            found.extend(glob.glob(os.path.join(rom_path, "**", pattern)))
+            if partition in ROOT_ONLY:
+                # Only search root level
+                found.extend(glob.glob(os.path.join(rom_path, pattern)))
+            elif partition in SUBDIR_ONLY:
+                # Only search one level of subdirs
+                found.extend(glob.glob(os.path.join(rom_path, "*", pattern)))
+            else:
+                # Search root + subdirs
+                found.extend(glob.glob(os.path.join(rom_path, pattern)))
+                found.extend(glob.glob(os.path.join(rom_path, "*", pattern)))
 
-        # De-duplicate and sort, store relative paths
+        # De-duplicate, sort, store relative paths
         unique = sorted(set(found))
         results[partition] = [os.path.relpath(f, rom_path) for f in unique]
 
     return results
+
+
+def scan_regions(rom_path: str) -> list[str]:
+    """Scan immediate subdirectories of a ROM folder to detect regions (e.g. MN3, PDN3)."""
+    regions = []
+    if not os.path.exists(rom_path):
+        return regions
+    for entry in os.listdir(rom_path):
+        full_path = os.path.join(rom_path, entry)
+        if os.path.isdir(full_path) and not entry.startswith("."):
+            regions.append(entry)
+    return sorted(regions)
 
 
 def get_file_size_mb(filepath: str) -> float:

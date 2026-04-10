@@ -3,55 +3,81 @@
 from flash_tool.flash_worker import FlashStep
 
 
-def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
+def build_other_model_steps(
+    skip_suw: bool = False,
+    use_fastbootd: bool = True,
+    already_in_fastboot: bool = False,
+    has_region: bool = False,
+) -> list[FlashStep]:
     """Build the flash profile for Other Model ROM following FLASH_STEPS.txt.
+
+    Args:
+        skip_suw: Whether to skip Android Setup Wizard after first boot.
+        use_fastbootd: If True, reboot to Fastbootd for dynamic partitions.
+        already_in_fastboot: If True, skip the initial ADB reboot + wait steps.
+        has_region: If True, skip the base product.img step (region variant handles it).
 
     Image placeholders (image_key) will be resolved against detected files
     at runtime. The image_arg_index indicates which arg[] element to replace.
     """
-    steps = [
-        # ── Step 1: Reboot to Bootloader ───────────────────────────────
-        FlashStep(
-            id=1,
-            name="Reboot to Bootloader",
-            command="adb",
-            args=["reboot", "bootloader"],
-            timeout=30,
-        ),
+    steps = []
+    step_id = 1
 
-        # ── Step 2: Wait for Fastboot (bootloader) ────────────────────
+    # ── Step 1-2: Boot to Fastboot (skipped if already in fastboot mode) ──────
+    if not already_in_fastboot:
+        steps += [
+            # Step 1: Reboot to Bootloader via ADB
+            FlashStep(
+                id=step_id,
+                name="Reboot to Bootloader (ADB)",
+                command="adb",
+                args=["reboot", "bootloader"],
+                timeout=30,
+            ),
+            # Step 2: Wait for Fastboot
+            FlashStep(
+                id=step_id + 1,
+                name="Wait for Bootloader (Fastboot)",
+                command="fastboot",
+                args=["devices"],
+                timeout=10,
+                wait_for_device_mode="fastboot",
+                wait_timeout=120,
+            ),
+        ]
+        step_id += 2
+
+    # ── Step: Check device in fastboot (always, to confirm) ────────────────────
+    steps += [
         FlashStep(
-            id=2,
-            name="Wait for Bootloader (Fastboot)",
+            id=step_id,
+            name="Check Device (Fastboot)",
             command="fastboot",
             args=["devices"],
             timeout=10,
             wait_for_device_mode="fastboot",
-            wait_timeout=120,
+            wait_timeout=60,
         ),
+    ]
+    step_id += 1
 
-        # ── Step 3: Unlock Bootloader ──────────────────────────────────
+    # ── Step: Unlock Bootloader ─────────────────────────────────────────────────
+    steps += [
         FlashStep(
-            id=3,
+            id=step_id,
             name="Unlock Bootloader",
             command="fastboot",
             args=["flashing", "unlock"],
-            timeout=30,
+            timeout=60,
             user_action="⚠️  Confirm unlock on device screen (Volume keys + Power)",
         ),
+    ]
+    step_id += 1
 
-        # ── Step 4: Verify Unlock ──────────────────────────────────────
+    # ── Steps: Flash Core Partitions ────────────────────────────────────────────
+    steps += [
         FlashStep(
-            id=4,
-            name="Verify Unlock Status",
-            command="fastboot",
-            args=["getvar", "unlocked"],
-            timeout=10,
-        ),
-
-        # ── Step 5: Flash boot ─────────────────────────────────────────
-        FlashStep(
-            id=5,
+            id=step_id,
             name="Flash boot.img",
             command="fastboot",
             args=["flash", "boot", "PLACEHOLDER"],
@@ -59,10 +85,8 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="boot",
             image_arg_index=2,
         ),
-
-        # ── Step 6: Flash dtbo ─────────────────────────────────────────
         FlashStep(
-            id=6,
+            id=step_id + 1,
             name="Flash dtbo.img",
             command="fastboot",
             args=["flash", "dtbo", "PLACEHOLDER"],
@@ -70,10 +94,8 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="dtbo",
             image_arg_index=2,
         ),
-
-        # ── Step 7: Flash init_boot ────────────────────────────────────
         FlashStep(
-            id=7,
+            id=step_id + 2,
             name="Flash init_boot.img",
             command="fastboot",
             args=["flash", "init_boot", "PLACEHOLDER"],
@@ -81,10 +103,8 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="init_boot",
             image_arg_index=2,
         ),
-
-        # ── Step 8: Flash vbmeta ───────────────────────────────────────
         FlashStep(
-            id=8,
+            id=step_id + 3,
             name="Flash vbmeta.img",
             command="fastboot",
             args=["flash", "vbmeta", "PLACEHOLDER"],
@@ -92,10 +112,8 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="vbmeta",
             image_arg_index=2,
         ),
-
-        # ── Step 9: Flash recovery ─────────────────────────────────────
         FlashStep(
-            id=9,
+            id=step_id + 4,
             name="Flash recovery.img",
             command="fastboot",
             args=["flash", "recovery", "PLACEHOLDER"],
@@ -103,30 +121,35 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="recovery",
             image_arg_index=2,
         ),
+    ]
+    step_id += 5
 
-        # ── Step 10: Reboot Fastbootd ──────────────────────────────────
-        FlashStep(
-            id=10,
-            name="Reboot to Fastbootd",
-            command="fastboot",
-            args=["reboot", "fastboot"],
-            timeout=30,
-        ),
+    # ── Steps: Fastbootd Transition (Conditional) ──────────────────────────────
+    if use_fastbootd:
+        steps += [
+            FlashStep(
+                id=step_id,
+                name="Reboot to Fastbootd",
+                command="fastboot",
+                args=["reboot", "fastboot"],
+                timeout=60,
+            ),
+            FlashStep(
+                id=step_id + 1,
+                name="Wait for Device (Fastbootd)",
+                command="fastboot",
+                args=["devices"],
+                timeout=10,
+                wait_for_device_mode="fastboot",
+                wait_timeout=120,
+            ),
+        ]
+        step_id += 2
 
-        # ── Step 11: Wait for Fastbootd ────────────────────────────────
+    # ── Steps: Flash Dynamic / System Partitions ────────────────────────────────
+    steps += [
         FlashStep(
-            id=11,
-            name="Wait for Device (Fastbootd)",
-            command="fastboot",
-            args=["devices"],
-            timeout=10,
-            wait_for_device_mode="fastboot",
-            wait_timeout=120,
-        ),
-
-        # ── Step 12: Flash system ──────────────────────────────────────
-        FlashStep(
-            id=12,
+            id=step_id,
             name="Flash system.img",
             command="fastboot",
             args=["flash", "system", "PLACEHOLDER"],
@@ -134,10 +157,8 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="system",
             image_arg_index=2,
         ),
-
-        # ── Step 13: Flash system_ext ──────────────────────────────────
         FlashStep(
-            id=13,
+            id=step_id + 1,
             name="Flash system_ext.img",
             command="fastboot",
             args=["flash", "system_ext", "PLACEHOLDER"],
@@ -145,10 +166,8 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="system_ext",
             image_arg_index=2,
         ),
-
-        # ── Step 14: Flash vendor ──────────────────────────────────────
         FlashStep(
-            id=14,
+            id=step_id + 2,
             name="Flash vendor.img",
             command="fastboot",
             args=["flash", "vendor", "PLACEHOLDER"],
@@ -156,74 +175,83 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="vendor",
             image_arg_index=2,
         ),
+    ]
+    step_id += 3
 
-        # ── Step 15: Flash product ─────────────────────────────────────
-        FlashStep(
-            id=15,
-            name="Flash product.img",
-            command="fastboot",
-            args=["flash", "product", "PLACEHOLDER"],
-            timeout=600,
-            image_key="product",
-            image_arg_index=2,
-        ),
+    # ── Step: Flash base product.img (ONLY when no region variant is selected) ──
+    if not has_region:
+        steps += [
+            FlashStep(
+                id=step_id,
+                name="Flash product.img",
+                command="fastboot",
+                args=["flash", "product", "PLACEHOLDER"],
+                timeout=600,
+                image_key="product",
+                image_arg_index=2,
+            ),
+        ]
+        step_id += 1
 
-        # ── Step 16: Flash regional product ────────────────────────────
-        FlashStep(
-            id=16,
-            name="Flash product (Region)",
-            command="fastboot",
-            args=["flash", "product", "PLACEHOLDER"],
-            timeout=600,
-            image_key="product_region",
-            image_arg_index=2,
-        ),
+    # ── Steps: Flash Regional Variant Files ────────────────────────────────────
+    if has_region:
+        steps += [
+            FlashStep(
+                id=step_id,
+                name="Flash product (Region)",
+                command="fastboot",
+                args=["flash", "product", "PLACEHOLDER"],
+                timeout=600,
+                image_key="product_region",
+                image_arg_index=2,
+            ),
+            FlashStep(
+                id=step_id + 1,
+                name="Flash userdata (Region)",
+                command="fastboot",
+                args=["flash", "userdata", "PLACEHOLDER"],
+                timeout=300,
+                image_key="userdata",
+                image_arg_index=2,
+            ),
+            FlashStep(
+                id=step_id + 2,
+                name="Flash vbmeta_system (Region)",
+                command="fastboot",
+                args=["flash", "vbmeta_system", "PLACEHOLDER"],
+                timeout=60,
+                image_key="vbmeta_system",
+                image_arg_index=2,
+            ),
+        ]
+        step_id += 3
 
-        # ── Step 17: Flash regional userdata ───────────────────────────
-        FlashStep(
-            id=17,
-            name="Flash userdata (Region)",
-            command="fastboot",
-            args=["flash", "userdata", "PLACEHOLDER"],
-            timeout=300,
-            image_key="userdata",
-            image_arg_index=2,
-        ),
+    # ── Steps: Return to Bootloader for Static Partitions ──────────────────────
+    if use_fastbootd:
+        steps += [
+            FlashStep(
+                id=step_id,
+                name="Reboot Bootloader",
+                command="fastboot",
+                args=["reboot", "bootloader"],
+                timeout=30,
+            ),
+            FlashStep(
+                id=step_id + 1,
+                name="Wait for Bootloader",
+                command="fastboot",
+                args=["devices"],
+                timeout=10,
+                wait_for_device_mode="fastboot",
+                wait_timeout=120,
+            ),
+        ]
+        step_id += 2
 
-        # ── Step 18: Flash regional vbmeta_system ──────────────────────
+    # ── Steps: Flash Static Partitions (Modem, ABL, TZ) ────────────────────────
+    steps += [
         FlashStep(
-            id=18,
-            name="Flash vbmeta_system (Region)",
-            command="fastboot",
-            args=["flash", "vbmeta_system", "PLACEHOLDER"],
-            timeout=60,
-            image_key="vbmeta_system",
-            image_arg_index=2,
-        ),
-
-        # ── Step 19: Reboot Bootloader ─────────────────────────────────
-        FlashStep(
-            id=19,
-            name="Reboot Bootloader",
-            command="fastboot",
-            args=["reboot", "bootloader"],
-            timeout=30,
-        ),
-
-        # ── Step 20: Wait for Bootloader ───────────────────────────────
-        FlashStep(
-            id=20,
-            name="Wait for Bootloader",
-            command="fastboot",
-            args=["devices"],
-            timeout=10,
-            wait_for_device_mode="fastboot",
-            wait_timeout=120,
-        ),
-
-        # ── Step 21: Flash modem ───────────────────────────────────────
-        FlashStep(
-            id=21,
+            id=step_id,
             name="Flash modem (NON-HLOS.bin)",
             command="fastboot",
             args=["flash", "modem", "PLACEHOLDER"],
@@ -231,10 +259,8 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="modem",
             image_arg_index=2,
         ),
-
-        # ── Step 22: Flash abl ─────────────────────────────────────────
         FlashStep(
-            id=22,
+            id=step_id + 1,
             name="Flash abl.elf",
             command="fastboot",
             args=["flash", "abl", "PLACEHOLDER"],
@@ -242,10 +268,8 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="abl",
             image_arg_index=2,
         ),
-
-        # ── Step 23: Flash tz ──────────────────────────────────────────
         FlashStep(
-            id=23,
+            id=step_id + 2,
             name="Flash tz.mbn",
             command="fastboot",
             args=["flash", "tz", "PLACEHOLDER"],
@@ -253,32 +277,33 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
             image_key="tz",
             image_arg_index=2,
         ),
+    ]
+    step_id += 3
 
-        # ── Step 24: Erase Userdata ────────────────────────────────────
+    # ── Steps: Erase + Final Reboot ─────────────────────────────────────────────
+    steps += [
         FlashStep(
-            id=24,
+            id=step_id,
             name="Erase Userdata",
             command="fastboot",
             args=["erase", "userdata"],
             timeout=30,
         ),
-
-        # ── Step 25: Final Reboot ──────────────────────────────────────
         FlashStep(
-            id=25,
+            id=step_id + 1,
             name="Final Reboot",
             command="fastboot",
             args=["reboot"],
             timeout=30,
         ),
     ]
+    step_id += 2
 
-    # ── Optional: Skip Setup Wizard ────────────────────────────────────────
+    # ── Optional: Skip Setup Wizard ─────────────────────────────────────────────
     if skip_suw:
         steps += [
-            # ── Step 26: Wait for ADB after first boot ─────────────────
             FlashStep(
-                id=26,
+                id=step_id,
                 name="Wait for Device (ADB) — Post-flash Boot",
                 command="adb",
                 args=["devices"],
@@ -286,37 +311,29 @@ def build_other_model_steps(skip_suw: bool = False) -> list[FlashStep]:
                 wait_for_device_mode="adb",
                 wait_timeout=240,
             ),
-
-            # ── Step 27: Mark device_provisioned ───────────────────────
             FlashStep(
-                id=27,
+                id=step_id + 1,
                 name="SUW: Mark device_provisioned",
                 command="adb",
                 args=["shell", "settings", "put", "global", "device_provisioned", "1"],
                 timeout=10,
             ),
-
-            # ── Step 28: Mark user_setup_complete ──────────────────────
             FlashStep(
-                id=28,
+                id=step_id + 2,
                 name="SUW: Mark user_setup_complete",
                 command="adb",
                 args=["shell", "settings", "put", "secure", "user_setup_complete", "1"],
                 timeout=10,
             ),
-
-            # ── Step 29: Mark setup_wizard_has_run ─────────────────────
             FlashStep(
-                id=29,
+                id=step_id + 3,
                 name="SUW: Mark setup_wizard_has_run",
                 command="adb",
                 args=["shell", "settings", "put", "secure", "setup_wizard_has_run", "1"],
                 timeout=10,
             ),
-
-            # ── Step 30: Final reboot to apply provisioning ─────────────
             FlashStep(
-                id=30,
+                id=step_id + 4,
                 name="SUW: Reboot to apply provisioning",
                 command="adb",
                 args=["reboot"],

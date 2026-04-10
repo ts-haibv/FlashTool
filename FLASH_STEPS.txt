@@ -35,9 +35,10 @@ fastboot reboot fastboot
 
 # Nạp lần lượt các phân vùng gốc trong không gian FastbootD:
 fastboot flash system system.img
-fastboot flash system_ext system_ext.img
+fastboot flash system_ext system_ext-lockon.img
 fastboot flash vendor vendor.img
-fastboot flash product product.img
+# fastboot flash product product.img
+# (Bỏ qua nếu dùng bản variant MN3/PDN3/TEN3... — product sẽ được nạp ở Bước 3.5)
 
 --------------------------------------------------------------
 
