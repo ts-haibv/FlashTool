@@ -86,8 +86,7 @@ def scan_rom_folder(rom_path: str) -> dict[str, list[str]]:
         searched in subdirs only.
       - Everything else: root + subdirs.
     """
-    ROOT_ONLY = {"product", "super", "boot", "dtbo", "init_boot",
-                 "vbmeta", "recovery", "system", "system_ext", "vendor"}
+    ROOT_ONLY = {"product"}
     SUBDIR_ONLY = {"product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"}
 
     results: dict[str, list[str]] = {}
@@ -135,6 +134,6 @@ def get_file_size_mb(filepath: str) -> float:
 
 # ── App Info ────────────────────────────────────────────────────────────────
 APP_NAME = "FlashTool"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 750

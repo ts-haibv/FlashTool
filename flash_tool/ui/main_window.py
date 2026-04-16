@@ -656,6 +656,14 @@ class MainWindow(ctk.CTk):
         """Update combo boxes with detected images."""
         for key, combo in self.image_combos.items():
             files = self.detected_images.get(key, [])
+            
+            # Fallback for G6 to catch regional images if base is missing
+            if not files and self.current_model.get() == "G6":
+                if key == "product":
+                    files = self.detected_images.get("product_region", [])
+                elif key == "vbmeta":
+                    files = self.detected_images.get("vbmeta_system", [])
+
             if files:
                 combo.configure(values=files)
                 combo.set(files[0])  # Auto-select first match
