@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 APP_NAME="FlashTool"
-APP_VERSION="1.1.0"
+APP_VERSION="1.1.1"
 BUILD_DIR="$SCRIPT_DIR/dist"
 DEB_DIR="$BUILD_DIR/deb_package"
 ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")

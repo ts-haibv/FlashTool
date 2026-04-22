@@ -240,11 +240,20 @@ class FlashWorker(threading.Thread):
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=step.timeout)
             out = proc.stdout + proc.stderr
             self._log(out)
+            out_lower = out.lower()
+
             # fastboot returns FAILED if already unlocked — treat as success
-            if "already" in out.lower() and "unlock" in out.lower():
+            if "already" in out_lower and "unlock" in out_lower:
                 self._log("✅ Device already unlocked — continuing")
                 step.progress = 1.0
                 return True
+
+            # OKAY means the unlock command was accepted by the device
+            if "okay" in out_lower:
+                self._log("✅ Bootloader unlock accepted (OKAY)")
+                step.progress = 1.0
+                return True
+
         except subprocess.TimeoutExpired:
             self._log("❌ Timeout starting unlock command")
             return False
@@ -252,9 +261,10 @@ class FlashWorker(threading.Thread):
             self._log(f"❌ Error during unlock command: {e}")
             return False
 
-        # 3. Poll until unlocked
+        # 3. Poll until unlocked — device may reboot after unlock prompt
         self._log("⏳ Polling unlock status... (waiting for user to confirm)")
-        deadline = time.time() + 60  # wait up to 60s
+        self._log("   Device may reboot after confirming — this is normal")
+        deadline = time.time() + 90  # wait up to 90s (device may reboot)
 
         while time.time() < deadline:
             if self.stopped:
@@ -265,7 +275,7 @@ class FlashWorker(threading.Thread):
             self._emit_progress(step, f"Waiting for confirmation... {elapsed:.0f}s")
 
             try:
-                res = subprocess.run([binary, "getvar", "unlocked"], capture_output=True, text=True, timeout=3)
+                res = subprocess.run([binary, "getvar", "unlocked"], capture_output=True, text=True, timeout=5)
                 combined = (res.stdout + res.stderr).lower()
                 if "unlocked: yes" in combined:
                     self._log("✅ Bootloader unlock confirmed!")
@@ -276,7 +286,7 @@ class FlashWorker(threading.Thread):
                 # Device might be rebooting or temporarily disconnected
                 pass
 
-            time.sleep(2)
+            time.sleep(3)
 
         self._log("❌ Timeout waiting for unlock confirmation")
         return False
