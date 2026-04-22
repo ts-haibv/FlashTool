@@ -95,13 +95,34 @@ def wait_for_device(
     return False, None
 
 
+def wait_for_reboot(
+    target_state: DeviceState,
+    timeout: int = 120,
+    poll_interval: float = 2.0,
+    on_tick: callable = None,
+) -> tuple[bool, str | None]:
+    """Wait for device to disappear then reappear in target state.
+
+    Useful for commands that trigger a device reboot (like unlock).
+    """
+    # 1. Wait for it to disappear (max 15s)
+    start = time.time()
+    while time.time() - start < 15:
+        state, _ = get_device_state()
+        if state == "disconnected":
+            break
+        time.sleep(1)
+
+    # 2. Now wait for it to come back
+    return wait_for_device(target_state, timeout, poll_interval, on_tick)
+
+
 def get_unlock_status() -> bool | None:
     """Check if bootloader is unlocked. Returns None if can't determine."""
-    code, stdout, _ = _run_cmd([FASTBOOT_PATH, "getvar", "unlocked"])
-    # fastboot may output to stderr
-    combined = stdout + _  # stderr was captured in _
-    if "yes" in combined.lower():
+    code, stdout, stderr = _run_cmd([FASTBOOT_PATH, "getvar", "unlocked"])
+    combined = (stdout + stderr).lower()
+    if "unlocked: yes" in combined:
         return True
-    if "no" in combined.lower():
+    if "unlocked: no" in combined:
         return False
     return None

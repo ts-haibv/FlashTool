@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Callable
 
 from flash_tool.config import ADB_PATH, FASTBOOT_PATH
-from flash_tool.device_manager import wait_for_device
+from flash_tool.device_manager import wait_for_device, wait_for_reboot
 
 
 class StepStatus(Enum):
@@ -179,13 +179,17 @@ class FlashWorker(threading.Thread):
             proc.wait(timeout=step.timeout)
             step.elapsed = time.time() - start_time
             step.output = "\n".join(output_lines)
+            combined = step.output.upper()
 
             if proc.returncode == 0:
+                # Check for negative confirmation (unlocked: no)
+                if "UNLOCKED: NO" in combined:
+                    self._log("❌ Device is still LOCKED. Unlock failed.")
+                    return False
                 step.progress = 1.0
                 return True
             else:
                 # fastboot often returns 0 but check for FAILED in output
-                combined = step.output.upper()
                 if "FAILED" in combined and "OKAY" not in combined:
                     return False
                 # If there's at least one OKAY, consider it success
@@ -251,6 +255,18 @@ class FlashWorker(threading.Thread):
             # OKAY means the unlock command was accepted by the device
             if "okay" in out_lower:
                 self._log("✅ Bootloader unlock accepted (OKAY)")
+                self._log("⏳ Waiting for device to reboot and reconnect in fastboot mode...")
+                
+                def on_tick(elapsed):
+                    step.elapsed = time.time() - start_time
+                    self._emit_progress(step, f"Waiting for reboot... {elapsed:.0f}s")
+                
+                success, _ = wait_for_reboot("fastboot", timeout=60, on_tick=on_tick)
+                if success:
+                    self._log("✅ Device back online in fastboot mode")
+                else:
+                    self._log("⚠️ Timeout waiting for device reboot, but proceeding anyway...")
+                
                 step.progress = 1.0
                 return True
 
