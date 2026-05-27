@@ -45,12 +45,39 @@ class MainWindow(ctk.CTk):
             "E11": [],
         }
         self.SCRIPT_PROFILES = {
-            "PS11": "flash_ps11.sh",
-            "E11": "flash_e11.sh",
+            "PS11": {
+                "script": "flash_ps11.sh",
+                "variant_arg": "-v",
+                "variants": ["kira", "mn4", "pdn4", "pen4"],
+                "variant_dirs": {
+                    "kira": "Kira",
+                    "mn4": "MN4",
+                    "pdn4": "PDN4",
+                    "pen4": "PEN4",
+                },
+                "default_args": ["-w"],
+                "default_variant": "kira",
+            },
+            "E11": {
+                "script": "flash_e11.sh",
+                "variant_arg": "-m",
+                "variants": ["MC6", "PDC6", "PEC6"],
+                "variant_dirs": {
+                    "MC6": "MC6",
+                    "PDC6": "PDC6",
+                    "PEC6": "PEC6",
+                },
+                "default_args": ["--wipe"],
+                "default_variant": "MC6",
+            },
         }
         self.rom_path: str = ""
         self.detected_images: dict[str, list[str]] = {}
         self.selected_images: dict[str, str] = {}
+        self.selected_script_variants: dict[str, str] = {
+            model: config["default_variant"]
+            for model, config in self.SCRIPT_PROFILES.items()
+        }
         self.skip_suw_var = ctk.BooleanVar(value=False)
         self.use_super = False
         self.flash_steps = []
@@ -460,12 +487,13 @@ class MainWindow(ctk.CTk):
 
             if self.current_model.get() in self.SCRIPT_PROFILES:
                 self.suw_checkbox.configure(state="disabled")
-                script_name = self.SCRIPT_PROFILES[self.current_model.get()]
+                script_name = self.SCRIPT_PROFILES[self.current_model.get()]["script"]
                 self.strategy_label.configure(
                     text=f"📜  {script_name}",
                     text_color=COLORS["text_secondary"],
                 )
                 self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+                self._configure_script_variant_selector()
             else:
                 self.suw_checkbox.configure(state="normal")
                 self.strategy_label.pack_forget()
@@ -623,13 +651,11 @@ class MainWindow(ctk.CTk):
                     regions.add(parts[0])
                     
         self.detected_regions = sorted(list(regions))
-        if self.detected_regions:
-            options = ["— none —"] + self.detected_regions
-            self.region_combo.configure(values=options)
-            self.region_combo.set(self.detected_regions[0])
-        else:
-            self.region_combo.configure(values=["— none —"])
-            self.region_combo.set("— none —")
+        if self.current_model.get() == "Other Model":
+            if self.detected_regions:
+                self._set_variant_selector(["— none —"] + self.detected_regions, self.detected_regions[0])
+            else:
+                self._set_variant_selector(["— none —"], "— none —")
             
         self._update_region_visibility()
 
@@ -648,13 +674,59 @@ class MainWindow(ctk.CTk):
 
     def _update_region_visibility(self):
         """Show or hide the region selection row based on model and regions."""
-        if hasattr(self, "detected_regions") and self.detected_regions and self.current_model.get() == "Other Model":
-            self.region_row.pack(fill="x", pady=(SPACING["sm"], 0))
+        current_model = self.current_model.get()
+        if current_model in self.SCRIPT_PROFILES:
+            self._configure_script_variant_selector()
+        elif hasattr(self, "detected_regions") and self.detected_regions and current_model == "Other Model":
+            self._set_variant_selector(["— none —"] + self.detected_regions, self.region_combo.get())
         else:
             self.region_row.pack_forget()
 
+    def _set_variant_selector(self, values: list[str], selected: str):
+        """Show the shared Variant row with the provided values."""
+        selected_value = selected if selected in values else values[0]
+        self.region_combo.configure(values=values)
+        self.region_combo.set(selected_value)
+        self.region_row.pack(fill="x", pady=(SPACING["sm"], 0))
+
+    def _get_script_variant_options(self, current_model: str) -> list[str]:
+        """Return script variants, preferring folders present in the selected ROM."""
+        config = self.SCRIPT_PROFILES[current_model]
+        if not self.rom_path:
+            return config["variants"]
+
+        detected = [
+            variant
+            for variant in config["variants"]
+            if os.path.isdir(os.path.join(self.rom_path, config["variant_dirs"][variant]))
+        ]
+        return detected or config["variants"]
+
+    def _configure_script_variant_selector(self):
+        """Show fixed script variants for PS11/E11 profiles."""
+        current_model = self.current_model.get()
+        config = self.SCRIPT_PROFILES[current_model]
+        values = self._get_script_variant_options(current_model)
+        selected_variant = self.selected_script_variants.get(
+            current_model,
+            config["default_variant"],
+        )
+
+        if selected_variant not in values:
+            selected_variant = config["default_variant"] if config["default_variant"] in values else values[0]
+            self.selected_script_variants[current_model] = selected_variant
+
+        self._set_variant_selector(values, selected_variant)
+
     def _on_region_selected(self, choice: str):
         """Update selected images based on region variant."""
+        current_model = self.current_model.get()
+        if current_model in self.SCRIPT_PROFILES:
+            self.selected_script_variants[current_model] = choice
+            self.log_panel.append(f"🌍 Selected Variant: {choice}")
+            self._update_flash_steps()
+            return
+
         if choice == "— none —":
             return
         
@@ -755,7 +827,7 @@ class MainWindow(ctk.CTk):
         else:
             required = []
             optional_with_steps = []
-            script_name = self.SCRIPT_PROFILES[current_model]
+            script_name = self.SCRIPT_PROFILES[current_model]["script"]
             app_root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
             script_candidates = [
                 os.path.join(self.rom_path, script_name),
@@ -784,10 +856,12 @@ class MainWindow(ctk.CTk):
             total_size += get_file_size_mb(full_path)
 
         if current_model in self.SCRIPT_PROFILES:
+            selected_variant = self.selected_script_variants[current_model]
             msg = (
                 f"Ready to flash {current_model} device.\n\n"
                 f"Firmware folder: {self.rom_path}\n"
-                f"Script: {self.SCRIPT_PROFILES[current_model]}\n\n"
+                f"Script: {self.SCRIPT_PROFILES[current_model]['script']}\n"
+                f"Variant: {selected_variant}\n\n"
                 f"⚠️  This will ERASE all data on the device!\n\n"
                 f"Continue?"
             )
@@ -869,9 +943,13 @@ class MainWindow(ctk.CTk):
                 has_region=has_region,
             )
         else:
+            config = self.SCRIPT_PROFILES[current_model]
+            selected_variant = self.selected_script_variants[current_model]
+            script_args = [config["variant_arg"], selected_variant] + config["default_args"]
             self.flash_steps = build_script_device_steps(
                 current_model,
-                self.SCRIPT_PROFILES[current_model],
+                config["script"],
+                script_args,
             )
         self._rebuild_step_widgets()
 
