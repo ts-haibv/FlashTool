@@ -36,6 +36,7 @@ class FlashStep:
     user_action: str = ""               # Message to show user (e.g. "Confirm on device")
     image_key: str = ""                 # Key for auto-detected image (e.g. "vbmeta")
     image_arg_index: int = -1           # Which arg index to replace with detected file
+    script_phase_pattern: str = ""      # Regex output marker for script-backed phase steps
     status: StepStatus = StepStatus.PENDING
     progress: float = 0.0              # 0.0 to 1.0
     elapsed: float = 0.0
@@ -73,6 +74,7 @@ class FlashWorker(threading.Thread):
         self.on_log = on_log
         self.on_finished = on_finished
         self._stop_event = threading.Event()
+        self._active_script_phase_id: int | None = None
 
     def stop(self):
         self._stop_event.set()
@@ -188,6 +190,7 @@ class FlashWorker(threading.Thread):
                     step.progress = current / total
                     self._emit_progress(step, f"Sending {current}/{total}", line)
                 else:
+                    self._update_script_phase(line)
                     self._emit_progress(step, output_line=line)
 
             proc.wait(timeout=step.timeout)
@@ -201,6 +204,7 @@ class FlashWorker(threading.Thread):
                     self._log("❌ Device is still LOCKED. Unlock failed.")
                     return False
                 step.progress = 1.0
+                self._complete_script_phases()
                 return True
             else:
                 # fastboot often returns 0 but check for FAILED in output
@@ -209,6 +213,7 @@ class FlashWorker(threading.Thread):
                 # If there's at least one OKAY, consider it success
                 if "OKAY" in combined or "FINISHED" in combined:
                     step.progress = 1.0
+                    self._complete_script_phases()
                     return True
                 return proc.returncode == 0
 
@@ -222,6 +227,36 @@ class FlashWorker(threading.Thread):
         except Exception as e:
             self._log(f"❌ Error: {e}")
             return False
+
+    def _update_script_phase(self, output_line: str):
+        """Update visual script phase steps from script output markers."""
+        for step in self.steps:
+            if not step.script_phase_pattern:
+                continue
+            if not re.search(step.script_phase_pattern, output_line, re.IGNORECASE):
+                continue
+
+            if self._active_script_phase_id and self._active_script_phase_id != step.id:
+                previous = next((s for s in self.steps if s.id == self._active_script_phase_id), None)
+                if previous and previous.status == StepStatus.RUNNING:
+                    previous.status = StepStatus.SUCCESS
+                    previous.progress = 1.0
+                    self._emit_progress(previous, "Done")
+
+            step.status = StepStatus.RUNNING
+            step.progress = 0.2
+            self._active_script_phase_id = step.id
+            self._emit_progress(step, "Running")
+            return
+
+    def _complete_script_phases(self):
+        """Mark all visual script phase steps complete after script success."""
+        for step in self.steps:
+            if step.command != "script_phase":
+                continue
+            step.status = StepStatus.SUCCESS
+            step.progress = 1.0
+            self._emit_progress(step, "Done")
 
     def _build_env(self, step: FlashStep) -> dict[str, str] | None:
         """Build subprocess environment for command execution."""
@@ -345,6 +380,12 @@ class FlashWorker(threading.Thread):
                 self._log("\n⚠️  Flash process stopped by user.")
                 all_success = False
                 break
+
+            if step.command == "script_phase":
+                if step.status != StepStatus.SUCCESS:
+                    step.status = StepStatus.SKIPPED
+                    self._emit_progress(step, "Covered by script")
+                continue
 
             self._log(f"\n{'─' * 50}")
             self._log(f"  Step {step.id}: {step.name}")

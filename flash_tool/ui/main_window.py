@@ -1,6 +1,8 @@
 """Main application window — ties all components together."""
 
 import os
+import shutil
+import subprocess
 import sys
 import threading
 import customtkinter as ctk
@@ -95,6 +97,8 @@ class MainWindow(ctk.CTk):
         self._build_body()
         
         self._update_flash_steps()
+        self._update_profile_guidance()
+        self._update_rom_folder_summary()
 
         # Start device polling
         self._poll_device()
@@ -208,8 +212,36 @@ class MainWindow(ctk.CTk):
             anchor="w",
         ).pack(fill="x")
 
-        rom_row = ctk.CTkFrame(section_rom, fg_color="transparent")
-        rom_row.pack(fill="x", pady=(SPACING["sm"], 0))
+        self.rom_card = ctk.CTkFrame(
+            section_rom,
+            fg_color=COLORS["bg_tertiary"],
+            border_width=1,
+            border_color=COLORS["border"],
+            corner_radius=8,
+        )
+        self.rom_card.pack(fill="x", pady=(SPACING["sm"], 0))
+
+        self.rom_status_label = ctk.CTkLabel(
+            self.rom_card,
+            text="No ROM folder selected",
+            font=FONTS["body_sm"],
+            text_color=COLORS["text_primary"],
+            anchor="w",
+        )
+        self.rom_status_label.pack(fill="x", padx=SPACING["sm"], pady=(SPACING["sm"], 0))
+
+        self.rom_summary_label = ctk.CTkLabel(
+            self.rom_card,
+            text="Choose the firmware package folder before flashing.",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+            justify="left",
+        )
+        self.rom_summary_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+
+        rom_row = ctk.CTkFrame(self.rom_card, fg_color="transparent")
+        rom_row.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
 
         self.rom_entry = ctk.CTkEntry(
             rom_row,
@@ -274,13 +306,23 @@ class MainWindow(ctk.CTk):
         divider1 = ctk.CTkFrame(sidebar, fg_color=COLORS["border"], height=1)
         divider1.pack(fill="x", padx=SPACING["md"], pady=SPACING["md"])
 
-        ctk.CTkLabel(
+        self.images_title_label = ctk.CTkLabel(
             sidebar,
             text="🔍  Detected Images",
             font=FONTS["heading_sm"],
             text_color=COLORS["text_primary"],
             anchor="w",
-        ).pack(fill="x", padx=SPACING["md"])
+        )
+        self.images_title_label.pack(fill="x", padx=SPACING["md"])
+
+        self.images_hint_label = ctk.CTkLabel(
+            sidebar,
+            text="Select a ROM folder to scan files.",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+        )
+        self.images_hint_label.pack(fill="x", padx=SPACING["md"], pady=(SPACING["xs"], 0))
 
         self.images_frame = ctk.CTkScrollableFrame(
             sidebar,
@@ -418,6 +460,18 @@ class MainWindow(ctk.CTk):
         # Build image selectors for each partition
         partitions = self.MODEL_PARTITIONS[self.current_model.get()]
 
+        if not partitions:
+            ctk.CTkLabel(
+                self.images_frame,
+                text="This profile uses the selected firmware folder directly. Pick the correct variant above, then start flash.",
+                font=FONTS["caption"],
+                text_color=COLORS["text_muted"],
+                anchor="w",
+                justify="left",
+                wraplength=280,
+            ).pack(fill="x", pady=SPACING["xs"])
+            return
+
         for key in partitions:
             row = ctk.CTkFrame(self.images_frame, fg_color="transparent")
             row.pack(fill="x", pady=SPACING["xs"])
@@ -470,6 +524,8 @@ class MainWindow(ctk.CTk):
     def _on_model_changed(self, choice: str):
         self._build_image_selectors()
         self._update_region_visibility()
+        self._update_rom_folder_summary()
+        self._update_profile_guidance()
         
         # Show strategy frame at all times to hold context-specific toggles/info
         self.strategy_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
@@ -489,7 +545,7 @@ class MainWindow(ctk.CTk):
                 self.suw_checkbox.configure(state="disabled")
                 script_name = self.SCRIPT_PROFILES[self.current_model.get()]["script"]
                 self.strategy_label.configure(
-                    text=f"📜  {script_name}",
+                    text=f"📜  {script_name} • wipe enabled",
                     text_color=COLORS["text_secondary"],
                 )
                 self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
@@ -506,6 +562,18 @@ class MainWindow(ctk.CTk):
             
         self._update_flash_steps()
         self.log_panel.append(f"📱 Switched model profile to: {choice}")
+
+    def _update_profile_guidance(self):
+        """Update profile-specific helper text around folder/image selection."""
+        current_model = self.current_model.get()
+        if current_model in self.SCRIPT_PROFILES:
+            self.images_title_label.configure(text="📦  Firmware Package")
+            self.images_hint_label.configure(
+                text="Folder contents are handled by the device script. Variant controls which model subfolder is used."
+            )
+        else:
+            self.images_title_label.configure(text="🔍  Detected Images")
+            self.images_hint_label.configure(text="Detected image files can be reviewed or overridden below.")
 
     def _build_center(self, parent):
         center = ctk.CTkFrame(parent, fg_color="transparent")
@@ -625,13 +693,48 @@ class MainWindow(ctk.CTk):
 
     def _browse_rom(self):
         """Open folder dialog to select ROM directory."""
-        path = filedialog.askdirectory(title="Select ROM Folder")
+        path = self._select_rom_folder()
         if not path:
             return
 
         self.rom_entry.delete(0, "end")
         self.rom_entry.insert(0, path)
         self._scan_rom_path(path)
+
+    def _select_rom_folder(self) -> str:
+        """Select a ROM folder using the most reliable dialog for the platform."""
+        if sys.platform.startswith("linux"):
+            path = self._select_rom_folder_with_zenity()
+            if path is not None:
+                return path
+
+        return filedialog.askdirectory(
+            title="Select ROM Folder",
+            parent=self,
+            initialdir=self.rom_path or os.path.expanduser("~"),
+        )
+
+    def _select_rom_folder_with_zenity(self) -> str | None:
+        zenity = shutil.which("zenity")
+        if not zenity:
+            return None
+
+        initial_dir = self.rom_path or os.path.expanduser("~")
+        result = subprocess.run(
+            [
+                zenity,
+                "--file-selection",
+                "--directory",
+                "--title=Select ROM Folder",
+                f"--filename={os.path.join(initial_dir, '')}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
         
     def _scan_rom_path(self, path: str):
         """Perform the actual scan for images and variants given a path."""
@@ -658,6 +761,7 @@ class MainWindow(ctk.CTk):
                 self._set_variant_selector(["— none —"], "— none —")
             
         self._update_region_visibility()
+        self._update_rom_folder_summary()
 
         self._update_image_combos()
         self.log_panel.append(f"📁 ROM folder: {path}")
@@ -671,6 +775,42 @@ class MainWindow(ctk.CTk):
             else:
                 self.log_panel.append(f"  ⚠️  {partition}: not found")
         self._update_super_strategy()
+
+    def _update_rom_folder_summary(self):
+        """Refresh folder card status after scan or model change."""
+        if not self.rom_path:
+            self.rom_status_label.configure(
+                text="No ROM folder selected",
+                text_color=COLORS["text_primary"],
+            )
+            self.rom_summary_label.configure(
+                text="Choose the firmware package folder before flashing.",
+                text_color=COLORS["text_muted"],
+            )
+            return
+
+        folder_name = os.path.basename(os.path.normpath(self.rom_path)) or self.rom_path
+        current_model = self.current_model.get()
+        self.rom_status_label.configure(
+            text=f"Selected: {folder_name}",
+            text_color=COLORS["accent_green"],
+        )
+
+        if current_model in self.SCRIPT_PROFILES:
+            variants = self._get_script_variant_options(current_model)
+            selected_variant = self.selected_script_variants.get(current_model, variants[0])
+            self.rom_summary_label.configure(
+                text=f"{current_model} package • variant {selected_variant} • wipe data enabled",
+                text_color=COLORS["text_secondary"],
+            )
+            return
+
+        image_count = sum(1 for files in self.detected_images.values() if files)
+        variant_count = len(getattr(self, "detected_regions", []))
+        self.rom_summary_label.configure(
+            text=f"{image_count} image groups detected • {variant_count} variant folders",
+            text_color=COLORS["text_secondary"],
+        )
 
     def _update_region_visibility(self):
         """Show or hide the region selection row based on model and regions."""
@@ -724,6 +864,7 @@ class MainWindow(ctk.CTk):
         if current_model in self.SCRIPT_PROFILES:
             self.selected_script_variants[current_model] = choice
             self.log_panel.append(f"🌍 Selected Variant: {choice}")
+            self._update_rom_folder_summary()
             self._update_flash_steps()
             return
 
@@ -731,6 +872,7 @@ class MainWindow(ctk.CTk):
             return
         
         self.log_panel.append(f"🌍 Selected Variant: {choice}")
+        self._update_rom_folder_summary()
         
         region_keys = ["product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"]
         for key in region_keys:
@@ -877,6 +1019,11 @@ class MainWindow(ctk.CTk):
             return
 
         # Reset step widgets
+        for step in self.flash_steps:
+            step.status = StepStatus.PENDING
+            step.progress = 0.0
+            step.elapsed = 0.0
+            step.output = ""
         for w in self.step_widgets.values():
             w.update_status("pending")
 

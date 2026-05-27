@@ -39,12 +39,12 @@ echo  📦 [3/3] Generating Inno Setup installer script...
 (
 echo [Setup]
 echo AppName=FlashTool
-echo AppVersion=1.1.3
+echo AppVersion=1.1.4
 echo DefaultDirName={autopf}\FlashTool
 echo DefaultGroupName=FlashTool
 echo UninstallDisplayIcon={app}\FlashTool.exe
 echo OutputDir=dist\installer
-echo OutputBaseFilename=FlashTool_Setup_1.1.3
+echo OutputBaseFilename=FlashTool_Setup_1.1.4
 echo Compression=lzma2
 echo SolidCompression=yes
 echo PrivilegesRequired=admin
