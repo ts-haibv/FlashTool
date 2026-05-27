@@ -2,6 +2,7 @@
 
 import os
 import re
+import sys
 import subprocess
 import threading
 import time
@@ -97,8 +98,19 @@ class FlashWorker(threading.Thread):
 
     def _build_command(self, step: FlashStep) -> list[str]:
         """Build the full command list, resolving image paths."""
-        binary = FASTBOOT_PATH if step.command == "fastboot" else ADB_PATH
         args = list(step.args)
+
+        if step.command == "script":
+            script_name = args[0]
+            app_root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(__file__)))
+            candidates = [
+                os.path.join(self.rom_path, script_name),
+                os.path.join(app_root, script_name),
+            ]
+            script_path = next((path for path in candidates if os.path.isfile(path)), script_name)
+            return ["bash", script_path] + args[1:]
+
+        binary = FASTBOOT_PATH if step.command == "fastboot" else ADB_PATH
 
         # Replace image placeholder with actual detected/selected file
         if step.image_key and step.image_arg_index >= 0:
@@ -151,6 +163,8 @@ class FlashWorker(threading.Thread):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                cwd=self.rom_path or None,
+                env=self._build_env(step),
             )
 
             output_lines = []
@@ -208,6 +222,16 @@ class FlashWorker(threading.Thread):
         except Exception as e:
             self._log(f"❌ Error: {e}")
             return False
+
+    def _build_env(self, step: FlashStep) -> dict[str, str] | None:
+        """Build subprocess environment for command execution."""
+        if step.command != "script":
+            return None
+
+        env = os.environ.copy()
+        if self.rom_path:
+            env["FLASH_FIRMWARE_DIR"] = self.rom_path
+        return env
 
     def _handle_unlock_step(self, step: FlashStep) -> bool:
         """Handle unlock logic featuring pre-check and auto-detection."""

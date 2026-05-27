@@ -1,6 +1,7 @@
 """Main application window — ties all components together."""
 
 import os
+import sys
 import threading
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -14,6 +15,7 @@ from flash_tool.device_manager import get_device_state
 from flash_tool.flash_worker import FlashWorker, FlashProgress, StepStatus
 from flash_tool.profiles.g6_ramba import build_g6_ramba_steps, build_suw_only_steps
 from flash_tool.profiles.other_model import build_other_model_steps
+from flash_tool.profiles.script_device import build_script_device_steps
 from flash_tool.ui.theme import COLORS, FONTS, SPACING
 from flash_tool.ui.step_widget import StepWidget
 from flash_tool.ui.log_panel import LogPanel
@@ -26,7 +28,7 @@ class MainWindow(ctk.CTk):
         super().__init__(**kwargs)
 
         # ── Window Setup ──
-        self.title(f"{APP_NAME} v{APP_VERSION} — G6 ROM Flash Tool")
+        self.title(f"{APP_NAME} v{APP_VERSION} — ROM Flash Tool")
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.minsize(900, 600)
         self.configure(fg_color=COLORS["bg_primary"])
@@ -39,6 +41,12 @@ class MainWindow(ctk.CTk):
         self.MODEL_PARTITIONS = {
             "G6": ["super", "vbmeta", "system", "product", "system_ext"],
             "Other Model": ["boot", "dtbo", "init_boot", "vbmeta", "recovery", "system", "system_ext", "vendor", "product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"],
+            "PS11": [],
+            "E11": [],
+        }
+        self.SCRIPT_PROFILES = {
+            "PS11": "flash_ps11.sh",
+            "E11": "flash_e11.sh",
         }
         self.rom_path: str = ""
         self.detected_images: dict[str, list[str]] = {}
@@ -143,7 +151,7 @@ class MainWindow(ctk.CTk):
 
         self.model_combo = ctk.CTkComboBox(
             section_model,
-            values=["G6", "Other Model"],
+            values=["G6", "Other Model", "PS11", "E11"],
             variable=self.current_model,
             font=FONTS["body_sm"],
             dropdown_font=FONTS["body_sm"],
@@ -440,17 +448,31 @@ class MainWindow(ctk.CTk):
         self.strategy_frame.pack(fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0))
         
         if self.current_model.get() == "G6":
+            self.suw_checkbox.configure(state="normal")
             self.fastbootd_checkbox.pack_forget()
             self.fastboot_already_checkbox.pack_forget()
             self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
             self._update_super_strategy()
         else:
             self.use_super = False
-            self.strategy_label.pack_forget()
-            self.fastbootd_checkbox.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["xs"]))
-            self.fastboot_already_checkbox.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+            self.fastbootd_checkbox.pack_forget()
+            self.fastboot_already_checkbox.pack_forget()
+
+            if self.current_model.get() in self.SCRIPT_PROFILES:
+                self.suw_checkbox.configure(state="disabled")
+                script_name = self.SCRIPT_PROFILES[self.current_model.get()]
+                self.strategy_label.configure(
+                    text=f"📜  {script_name}",
+                    text_color=COLORS["text_secondary"],
+                )
+                self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+            else:
+                self.suw_checkbox.configure(state="normal")
+                self.strategy_label.pack_forget()
+                self.fastbootd_checkbox.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["xs"]))
+                self.fastboot_already_checkbox.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
             
-            if hasattr(self, "detected_regions") and self.detected_regions:
+            if self.current_model.get() == "Other Model" and hasattr(self, "detected_regions") and self.detected_regions:
                 # Trigger variant update for Other Model
                 self._on_region_selected(self.region_combo.get())
             
@@ -718,16 +740,30 @@ class MainWindow(ctk.CTk):
             return
 
         # Validate required images based on flash strategy
-        if self.current_model.get() == "G6":
+        current_model = self.current_model.get()
+
+        if current_model == "G6":
             if self.use_super:
                 required = ["super"]
                 optional_with_steps = ["vbmeta"]
             else:
                 required = ["system"]  # system.img is always required
                 optional_with_steps = ["vbmeta", "product", "system_ext"]
-        else:
+        elif current_model == "Other Model":
             required = ["boot", "system", "vendor"]
             optional_with_steps = ["dtbo", "init_boot", "vbmeta", "recovery", "system_ext", "product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"]
+        else:
+            required = []
+            optional_with_steps = []
+            script_name = self.SCRIPT_PROFILES[current_model]
+            app_root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            script_candidates = [
+                os.path.join(self.rom_path, script_name),
+                os.path.join(app_root, script_name),
+            ]
+            if not any(os.path.isfile(path) for path in script_candidates):
+                messagebox.showerror("Error", f"Flash script not found: {script_name}")
+                return
 
         for key in required:
             if key not in self.selected_images:
@@ -747,13 +783,22 @@ class MainWindow(ctk.CTk):
             full_path = os.path.join(self.rom_path, img)
             total_size += get_file_size_mb(full_path)
 
-        msg = (
-            f"Ready to flash G6 device.\n\n"
-            f"ROM: {self.rom_path}\n"
-            f"Images: {len(self.selected_images)} selected ({total_size:.0f} MB total)\n\n"
-            f"⚠️  This will ERASE all data on the device!\n\n"
-            f"Continue?"
-        )
+        if current_model in self.SCRIPT_PROFILES:
+            msg = (
+                f"Ready to flash {current_model} device.\n\n"
+                f"Firmware folder: {self.rom_path}\n"
+                f"Script: {self.SCRIPT_PROFILES[current_model]}\n\n"
+                f"⚠️  This will ERASE all data on the device!\n\n"
+                f"Continue?"
+            )
+        else:
+            msg = (
+                f"Ready to flash {current_model} device.\n\n"
+                f"ROM: {self.rom_path}\n"
+                f"Images: {len(self.selected_images)} selected ({total_size:.0f} MB total)\n\n"
+                f"⚠️  This will ERASE all data on the device!\n\n"
+                f"Continue?"
+            )
         if not messagebox.askyesno("Confirm Flash", msg):
             return
 
@@ -810,9 +855,11 @@ class MainWindow(ctk.CTk):
 
     def _update_flash_steps(self):
         """Update steps based on selected model and strategy."""
-        if self.current_model.get() == "G6":
+        current_model = self.current_model.get()
+
+        if current_model == "G6":
             self.flash_steps = build_g6_ramba_steps(skip_suw=self.skip_suw_var.get(), use_super=self.use_super)
-        else:
+        elif current_model == "Other Model":
             region = self.region_combo.get() if hasattr(self, "region_combo") else ""
             has_region = bool(region and region != "— none —")
             self.flash_steps = build_other_model_steps(
@@ -820,6 +867,11 @@ class MainWindow(ctk.CTk):
                 use_fastbootd=getattr(self, "use_fastbootd", ctk.BooleanVar(value=True)).get(),
                 already_in_fastboot=getattr(self, "already_in_fastboot", ctk.BooleanVar(value=False)).get(),
                 has_region=has_region,
+            )
+        else:
+            self.flash_steps = build_script_device_steps(
+                current_model,
+                self.SCRIPT_PROFILES[current_model],
             )
         self._rebuild_step_widgets()
 
@@ -842,6 +894,9 @@ class MainWindow(ctk.CTk):
 
     def _update_super_strategy(self):
         """Detect super.img selection and switch flash strategy automatically."""
+        if self.current_model.get() != "G6":
+            return
+
         super_combo = self.image_combos.get("super")
         new_use_super = (
             super_combo is not None
@@ -916,7 +971,10 @@ class MainWindow(ctk.CTk):
         self.stop_btn.pack_forget()
         self.start_btn.pack(side="right", padx=SPACING["lg"])
         self.suw_btn.configure(state="normal")
-        self.suw_checkbox.configure(state="normal")
+        if self.current_model.get() in self.SCRIPT_PROFILES:
+            self.suw_checkbox.configure(state="disabled")
+        else:
+            self.suw_checkbox.configure(state="normal")
         self.model_combo.configure(state="readonly")
 
         # Restore flash step widgets
@@ -973,7 +1031,10 @@ class MainWindow(ctk.CTk):
         self.stop_btn.pack_forget()
         self.start_btn.pack(side="right", padx=SPACING["lg"])
         self.suw_btn.configure(state="normal")
-        self.suw_checkbox.configure(state="normal")
+        if self.current_model.get() in self.SCRIPT_PROFILES:
+            self.suw_checkbox.configure(state="disabled")
+        else:
+            self.suw_checkbox.configure(state="normal")
         self.model_combo.configure(state="readonly")
 
         if success:

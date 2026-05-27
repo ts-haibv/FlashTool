@@ -10,7 +10,11 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets/icon.png', 'assets')],
+    datas=[
+        ('assets/icon.png', 'assets'),
+        ('flash_ps11.sh', '.'),
+        ('flash_e11.sh', '.'),
+    ],
     hiddenimports=[
         'customtkinter',
         'flash_tool',
@@ -20,6 +24,7 @@ a = Analysis(
         'flash_tool.profiles',
         'flash_tool.profiles.g6_ramba',
         'flash_tool.profiles.other_model',
+        'flash_tool.profiles.script_device',
         'flash_tool.ui',
         'flash_tool.ui.theme',
         'flash_tool.ui.step_widget',

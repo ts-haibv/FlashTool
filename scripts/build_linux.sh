@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 APP_NAME="FlashTool"
-APP_VERSION="1.1.2"
+APP_VERSION="1.1.3"
 BUILD_DIR="$SCRIPT_DIR/dist"
 DEB_DIR="$BUILD_DIR/deb_package"
 ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
@@ -24,6 +24,7 @@ if [ ! -d ".venv" ]; then
     python3 -m venv .venv
 fi
 source .venv/bin/activate
+python -m pip --version >/dev/null 2>&1 || python -m ensurepip --upgrade
 pip install -q -r requirements.txt
 pip install -q pyinstaller
 
