@@ -45,6 +45,7 @@ class MainWindow(ctk.CTk):
             "Other Model": ["boot", "dtbo", "init_boot", "vbmeta", "recovery", "system", "system_ext", "vendor", "product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"],
             "PS11": [],
             "E11": [],
+            "E10": [],
         }
         self.SCRIPT_PROFILES = {
             "PS11": {
@@ -71,6 +72,23 @@ class MainWindow(ctk.CTk):
                 },
                 "default_args": ["--wipe"],
                 "default_variant": "MC6",
+            },
+            "E10": {
+                "script": "flash_e10.sh",
+                "variant_arg": "-m",
+                "variants": ["MC5", "PDC5", "PEC5", "PHC5", "PKC5", "TAC5", "TDC5", "TEC5"],
+                "variant_dirs": {
+                    "MC5": "MC5",
+                    "PDC5": "PDC5",
+                    "PEC5": "PEC5",
+                    "PHC5": "PHC5",
+                    "PKC5": "PKC5",
+                    "TAC5": "TAC5",
+                    "TDC5": "TDC5",
+                    "TEC5": "TEC5",
+                },
+                "default_args": ["--wipe"],
+                "default_variant": "MC5",
             },
         }
         self.rom_path: str = ""
@@ -183,7 +201,7 @@ class MainWindow(ctk.CTk):
 
         self.model_combo = ctk.CTkComboBox(
             section_model,
-            values=["G6", "Other Model", "PS11", "E11"],
+            values=["G6", "Other Model", "PS11", "E11", "E10"],
             variable=self.current_model,
             font=FONTS["body_sm"],
             dropdown_font=FONTS["body_sm"],
@@ -583,8 +601,10 @@ class MainWindow(ctk.CTk):
                 else:
                     self.e11_rom_type_frame.pack_forget()
                     script_name = self.SCRIPT_PROFILES[self.current_model.get()]["script"]
+                    default_args = self.SCRIPT_PROFILES[self.current_model.get()].get("default_args", [])
+                    wipe_note = "wipe enabled" if "--wipe" in default_args else "dirty flash"
                     self.strategy_label.configure(
-                        text=f"📜  {script_name} • wipe enabled",
+                        text=f"📜  {script_name} • {wipe_note}",
                         text_color=COLORS["text_secondary"],
                     )
             else:
@@ -844,8 +864,10 @@ class MainWindow(ctk.CTk):
                     text_color=COLORS["text_secondary"],
                 )
             else:
+                default_args = self.SCRIPT_PROFILES[current_model].get("default_args", [])
+                wipe_label = "wipe data enabled" if "--wipe" in default_args else "dirty flash"
                 self.rom_summary_label.configure(
-                    text=f"{current_model} package • variant {selected_variant} • wipe data enabled",
+                    text=f"{current_model} package • variant {selected_variant} • {wipe_label}",
                     text_color=COLORS["text_secondary"],
                 )
             return

@@ -22,6 +22,15 @@ SCRIPT_PHASES = {
         ("Flash bootloader and physical partitions", r"Flash bootloader and boot-slot partitions"),
         ("Set active slot and reboot", r"Set active slot|Reboot device"),
     ],
+    "E10": [
+        ("Validate package and enter bootloader", r"Device already in fastboot|Reboot to bootloader"),
+        ("Flash fastbootd bootstrap partitions", r"Flash boot images needed for fastbootd"),
+        ("Enter fastbootd and flash dynamic partitions", r"Device already in fastbootd|Flash dynamic partitions"),
+        ("Reboot to bootloader for firmware", r"Reboot to bootloader for firmware"),
+        ("Flash bootloader and modem partitions", r"Flash bootloader partitions|Flash modem"),
+        ("Flash vbmeta and physical partitions", r"Flash vbmeta|Flash non-slot physical"),
+        ("Set active slot and reboot", r"Set active slot|Reboot device"),
+    ],
 }
 
 
