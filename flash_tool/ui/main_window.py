@@ -81,6 +81,7 @@ class MainWindow(ctk.CTk):
             for model, config in self.SCRIPT_PROFILES.items()
         }
         self.skip_suw_var = ctk.BooleanVar(value=False)
+        self.e11_rom_type_var = ctk.StringVar(value="Official")
         self.use_super = False
         self.flash_steps = []
         self.worker: FlashWorker | None = None
@@ -258,7 +259,7 @@ class MainWindow(ctk.CTk):
         self.rom_entry.bind("<Return>", lambda e: self._on_rom_entry_changed())
         self.rom_entry.bind("<FocusOut>", lambda e: self._on_rom_entry_changed())
 
-        browse_btn = ctk.CTkButton(
+        self.browse_btn = ctk.CTkButton(
             rom_row,
             text="Browse",
             font=FONTS["body_sm"],
@@ -269,7 +270,7 @@ class MainWindow(ctk.CTk):
             corner_radius=6,
             command=self._browse_rom,
         )
-        browse_btn.pack(side="right")
+        self.browse_btn.pack(side="right")
 
         # ── Variant/Region Selection ──
         self.region_row = ctk.CTkFrame(section_rom, fg_color="transparent")
@@ -372,6 +373,33 @@ class MainWindow(ctk.CTk):
             anchor="w",
             justify="left",
         ).pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
+
+        # ── E11 ROM Type Selector ──
+        self.e11_rom_type_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
+        # Packed dynamically in _on_model_changed when E11 is selected
+
+        ctk.CTkLabel(
+            self.e11_rom_type_frame,
+            text="🗂️  ROM Type",
+            font=FONTS["caption"],
+            text_color=COLORS["text_muted"],
+            anchor="w",
+        ).pack(fill="x", padx=SPACING["sm"], pady=(SPACING["sm"], 0))
+
+        self.e11_rom_type_seg = ctk.CTkSegmentedButton(
+            self.e11_rom_type_frame,
+            values=["Official", "Jenkins"],
+            variable=self.e11_rom_type_var,
+            font=FONTS["body_sm"],
+            fg_color=COLORS["bg_input"],
+            selected_color=COLORS["accent_blue"],
+            selected_hover_color="#4a70d4",
+            unselected_color=COLORS["bg_hover"],
+            unselected_hover_color=COLORS["bg_secondary"],
+            text_color=COLORS["text_primary"],
+            command=self._on_e11_rom_type_changed,
+        )
+        self.e11_rom_type_seg.pack(fill="x", padx=SPACING["sm"], pady=(SPACING["xs"], SPACING["sm"]))
 
         # ── Flash Strategy Indicator ──
         self.strategy_frame = ctk.CTkFrame(sidebar, fg_color=COLORS["bg_tertiary"], corner_radius=8)
@@ -534,6 +562,7 @@ class MainWindow(ctk.CTk):
             self.suw_checkbox.configure(state="normal")
             self.fastbootd_checkbox.pack_forget()
             self.fastboot_already_checkbox.pack_forget()
+            self.e11_rom_type_frame.pack_forget()
             self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
             self._update_super_strategy()
         else:
@@ -543,15 +572,24 @@ class MainWindow(ctk.CTk):
 
             if self.current_model.get() in self.SCRIPT_PROFILES:
                 self.suw_checkbox.configure(state="disabled")
-                script_name = self.SCRIPT_PROFILES[self.current_model.get()]["script"]
-                self.strategy_label.configure(
-                    text=f"📜  {script_name} • wipe enabled",
-                    text_color=COLORS["text_secondary"],
-                )
                 self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
                 self._configure_script_variant_selector()
+                if self.current_model.get() == "E11":
+                    self.e11_rom_type_frame.pack(
+                        fill="x", padx=SPACING["md"], pady=(SPACING["sm"], 0),
+                        before=self.strategy_frame,
+                    )
+                    self._update_e11_strategy_label()
+                else:
+                    self.e11_rom_type_frame.pack_forget()
+                    script_name = self.SCRIPT_PROFILES[self.current_model.get()]["script"]
+                    self.strategy_label.configure(
+                        text=f"📜  {script_name} • wipe enabled",
+                        text_color=COLORS["text_secondary"],
+                    )
             else:
                 self.suw_checkbox.configure(state="normal")
+                self.e11_rom_type_frame.pack_forget()
                 self.strategy_label.pack_forget()
                 self.fastbootd_checkbox.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["xs"]))
                 self.fastboot_already_checkbox.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
@@ -799,10 +837,17 @@ class MainWindow(ctk.CTk):
         if current_model in self.SCRIPT_PROFILES:
             variants = self._get_script_variant_options(current_model)
             selected_variant = self.selected_script_variants.get(current_model, variants[0])
-            self.rom_summary_label.configure(
-                text=f"{current_model} package • variant {selected_variant} • wipe data enabled",
-                text_color=COLORS["text_secondary"],
-            )
+            if current_model == "E11":
+                rom_type = self.e11_rom_type_var.get()
+                self.rom_summary_label.configure(
+                    text=f"{current_model} • {rom_type} ROM • variant {selected_variant} • dirty flash",
+                    text_color=COLORS["text_secondary"],
+                )
+            else:
+                self.rom_summary_label.configure(
+                    text=f"{current_model} package • variant {selected_variant} • wipe data enabled",
+                    text_color=COLORS["text_secondary"],
+                )
             return
 
         image_count = sum(1 for files in self.detected_images.values() if files)
@@ -999,12 +1044,22 @@ class MainWindow(ctk.CTk):
 
         if current_model in self.SCRIPT_PROFILES:
             selected_variant = self.selected_script_variants[current_model]
+            if current_model == "E11":
+                rom_type = self.e11_rom_type_var.get()
+                script_display = "flash_e11_jenkin.sh" if rom_type == "Jenkins" else self.SCRIPT_PROFILES[current_model]["script"]
+                data_note = "⚠️  Dirty flash — user data will be PRESERVED."
+            else:
+                rom_type = None
+                script_display = self.SCRIPT_PROFILES[current_model]["script"]
+                data_note = "⚠️  This will ERASE all data on the device!"
+            rom_type_line = f"ROM Type: {rom_type}\n" if rom_type else ""
             msg = (
                 f"Ready to flash {current_model} device.\n\n"
                 f"Firmware folder: {self.rom_path}\n"
-                f"Script: {self.SCRIPT_PROFILES[current_model]['script']}\n"
+                f"Script: {script_display}\n"
+                f"{rom_type_line}"
                 f"Variant: {selected_variant}\n\n"
-                f"⚠️  This will ERASE all data on the device!\n\n"
+                f"{data_note}\n\n"
                 f"Continue?"
             )
         else:
@@ -1035,9 +1090,7 @@ class MainWindow(ctk.CTk):
         # Update UI state — swap Start → Stop
         self.start_btn.pack_forget()
         self.stop_btn.pack(**self._stop_btn_pack_opts)
-        self.suw_btn.configure(state="disabled")
-        self.suw_checkbox.configure(state="disabled")
-        self.model_combo.configure(state="disabled")
+        self._lock_controls()
         self.status_label.configure(
             text="⚡ Flashing in progress...",
             text_color=COLORS["accent_orange"],
@@ -1092,13 +1145,78 @@ class MainWindow(ctk.CTk):
         else:
             config = self.SCRIPT_PROFILES[current_model]
             selected_variant = self.selected_script_variants[current_model]
+            if current_model == "E11" and self.e11_rom_type_var.get() == "Jenkins":
+                script_name = "flash_e11_jenkin.sh"
+            else:
+                script_name = config["script"]
             script_args = [config["variant_arg"], selected_variant] + config["default_args"]
             self.flash_steps = build_script_device_steps(
                 current_model,
-                config["script"],
+                script_name,
                 script_args,
             )
         self._rebuild_step_widgets()
+
+    def _on_e11_rom_type_changed(self, value: str):
+        """Handle E11 ROM type toggle between Official and Jenkins."""
+        self._update_e11_strategy_label()
+        self._update_flash_steps()
+        self.log_panel.append(f"🗂️  E11 ROM type set to: {value}")
+
+    def _update_e11_strategy_label(self):
+        """Refresh the strategy label to reflect current E11 ROM type."""
+        rom_type = self.e11_rom_type_var.get()
+        if rom_type == "Jenkins":
+            script_name = "flash_e11_jenkin.sh"
+            color = COLORS["accent_orange"]
+        else:
+            script_name = self.SCRIPT_PROFILES["E11"]["script"]
+            color = COLORS["text_secondary"]
+        self.strategy_label.configure(
+            text=f"📜  {script_name} • dirty flash",
+            text_color=color,
+        )
+
+    def _lock_controls(self):
+        """Disable all configuration controls during flashing."""
+        self.model_combo.configure(state="disabled")
+        self.rom_entry.configure(state="disabled")
+        self.browse_btn.configure(state="disabled")
+        self.region_combo.configure(state="disabled")
+        self.suw_checkbox.configure(state="disabled")
+        self.suw_btn.configure(state="disabled")
+        self.e11_rom_type_seg.configure(state="disabled")
+        self.fastbootd_checkbox.configure(state="disabled")
+        self.fastboot_already_checkbox.configure(state="disabled")
+        for combo in self.image_combos.values():
+            combo.configure(state="disabled")
+        # Disable all browse-image buttons inside images_frame
+        for widget in self.images_frame.winfo_children():
+            for child in widget.winfo_children():
+                if isinstance(child, ctk.CTkButton):
+                    child.configure(state="disabled")
+
+    def _unlock_controls(self):
+        """Re-enable configuration controls after flashing completes."""
+        self.model_combo.configure(state="readonly")
+        self.rom_entry.configure(state="normal")
+        self.browse_btn.configure(state="normal")
+        self.region_combo.configure(state="readonly")
+        self.e11_rom_type_seg.configure(state="normal")
+        current_model = self.current_model.get()
+        if current_model in self.SCRIPT_PROFILES:
+            self.suw_checkbox.configure(state="disabled")
+        else:
+            self.suw_checkbox.configure(state="normal")
+            self.fastbootd_checkbox.configure(state="normal")
+            self.fastboot_already_checkbox.configure(state="normal")
+        self.suw_btn.configure(state="normal")
+        for combo in self.image_combos.values():
+            combo.configure(state="readonly")
+        for widget in self.images_frame.winfo_children():
+            for child in widget.winfo_children():
+                if isinstance(child, ctk.CTkButton):
+                    child.configure(state="normal")
 
     def _on_suw_toggle(self):
         """Rebuild step list when the Skip Setup Wizard checkbox is toggled."""
@@ -1169,9 +1287,7 @@ class MainWindow(ctk.CTk):
         # Lock UI — swap Start → Stop
         self.start_btn.pack_forget()
         self.stop_btn.pack(**self._stop_btn_pack_opts)
-        self.suw_btn.configure(state="disabled")
-        self.suw_checkbox.configure(state="disabled")
-        self.model_combo.configure(state="disabled")
+        self._lock_controls()
         self.status_label.configure(
             text="🔓 Skipping Setup Wizard...",
             text_color=COLORS["accent_orange"],
@@ -1195,12 +1311,7 @@ class MainWindow(ctk.CTk):
         """Restore UI after SUW-only run, then rebuild normal step list."""
         self.stop_btn.pack_forget()
         self.start_btn.pack(side="right", padx=SPACING["lg"])
-        self.suw_btn.configure(state="normal")
-        if self.current_model.get() in self.SCRIPT_PROFILES:
-            self.suw_checkbox.configure(state="disabled")
-        else:
-            self.suw_checkbox.configure(state="normal")
-        self.model_combo.configure(state="readonly")
+        self._unlock_controls()
 
         # Restore flash step widgets
         self._rebuild_step_widgets()
@@ -1255,12 +1366,7 @@ class MainWindow(ctk.CTk):
 
         self.stop_btn.pack_forget()
         self.start_btn.pack(side="right", padx=SPACING["lg"])
-        self.suw_btn.configure(state="normal")
-        if self.current_model.get() in self.SCRIPT_PROFILES:
-            self.suw_checkbox.configure(state="disabled")
-        else:
-            self.suw_checkbox.configure(state="normal")
-        self.model_combo.configure(state="readonly")
+        self._unlock_controls()
 
         if success:
             self.status_label.configure(
