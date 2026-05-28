@@ -14,7 +14,6 @@ a = Analysis(
         ('assets/icon.png', 'assets'),
         ('flash_ps11.sh', '.'),
         ('flash_e11.sh', '.'),
-        ('flash_e11_jenkin.sh', '.'),
         ('flash_e10.sh', '.'),
     ],
     hiddenimports=[
