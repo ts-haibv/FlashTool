@@ -33,6 +33,7 @@ set -uo pipefail
 # ──────────────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "${FLASH_FIRMWARE_DIR:-$(dirname "${BASH_SOURCE[0]}")}" && pwd)"
+SCRIPT_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KIRA_DIR="${SCRIPT_DIR}/Kira"
 
 # Colors
@@ -129,7 +130,7 @@ detect_rom_type() {
 # Looks in: deb-installed assets dir → SCRIPT_DIR.
 find_bundled_vbmeta() {
     local deb_dir="/usr/share/FlashTool/assets/ps11"
-    for dir in "$deb_dir" "$SCRIPT_DIR"; do
+    for dir in "$deb_dir" "$SCRIPT_ABS" "$SCRIPT_DIR"; do
         for name in vbmeta_verification_disabled.img vbmeta.img; do
             if [[ -f "$dir/$name" ]]; then
                 echo "$dir/$name" && return 0
@@ -164,6 +165,35 @@ fb_flash_slot() {
         log_warn "Skipped ${partition}"
         SKIPPED=$((SKIPPED + 1))
     fi
+}
+
+# ── Device state detection helpers ────────────────────────────────────────
+
+device_in_fastboot() {
+    if [[ "${DRY_RUN}" == true ]]; then return 1; fi
+    if [[ -n "${DEVICE_SERIAL}" ]]; then
+        fastboot devices 2>/dev/null | awk '{print $1}' | grep -Fxq "${DEVICE_SERIAL}"
+    else
+        [[ -n "$(fastboot devices 2>/dev/null | awk 'NF {print $1; exit}')" ]]
+    fi
+}
+
+device_in_adb() {
+    if [[ "${DRY_RUN}" == true ]]; then return 1; fi
+    if [[ -n "${DEVICE_SERIAL}" ]]; then
+        adb devices 2>/dev/null | awk '$2 == "device" {print $1}' | grep -Fxq "${DEVICE_SERIAL}"
+    else
+        [[ -n "$(adb devices 2>/dev/null | awk '$2 == "device" {print $1; exit}')" ]]
+    fi
+}
+
+device_in_fastbootd() {
+    if [[ "${DRY_RUN}" == true ]]; then return 1; fi
+    local -a fb_cmd=()
+    [[ "${USE_SUDO}" == true ]] && fb_cmd+=(sudo)
+    fb_cmd+=(fastboot)
+    [[ -n "${DEVICE_SERIAL}" ]] && fb_cmd+=(-s "${DEVICE_SERIAL}")
+    timeout 5 "${fb_cmd[@]}" getvar is-userspace 2>&1 | grep -q "is-userspace: yes"
 }
 
 # Auto-detect if sudo is needed for fastboot
@@ -1004,6 +1034,19 @@ main_jenkins() {
 
     # ── Phase 1: Bootloader mode — flash vbmeta + set slot ──
     detect_sudo
+
+    # Auto-enter bootloader from any state
+    if device_in_fastboot; then
+        log_info "Device already in fastboot mode"
+    elif device_in_adb; then
+        log_info "Rebooting to bootloader via adb..."
+        adb reboot bootloader 2>/dev/null || true
+        sleep 5
+    elif device_in_fastbootd; then
+        log_info "Rebooting to bootloader from fastbootd..."
+        fb_exec reboot-bootloader 2>/dev/null || true
+        sleep 5
+    fi
     wait_for_device "fastboot"
 
     log_phase "1 — BOOTSTRAP (bootloader mode)"
