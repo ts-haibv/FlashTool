@@ -61,6 +61,11 @@ USE_SUDO=false
 FLASH_TIMEOUT=120
 SKIPPED=0
 
+# ROM type detection
+# Official: full firmware with boot.img, bootloader, etc.
+# Jenkins: partial ROM (system/system_ext/product + pvmfw only)
+ROM_TYPE=""  # "official" | "jenkins" | "" (auto-detect from boot.img)
+
 # Counters
 STEP=0
 TOTAL_STEPS=0
@@ -106,6 +111,59 @@ log_error() {
 log_fatal() {
     echo -e "\n${RED}${BOLD}  ✗ FATAL: $1${NC}\n"
     exit 1
+}
+
+# ROM type auto-detection
+detect_rom_type() {
+    if [[ -n "$ROM_TYPE" ]]; then
+        return 0
+    fi
+    if [[ -f "${SCRIPT_DIR}/boot.img" ]]; then
+        ROM_TYPE="official"
+    else
+        ROM_TYPE="jenkins"
+    fi
+}
+
+# Find bundled vbmeta_verification_disabled.img for Jenkins mode.
+# Looks in: deb-installed assets dir → SCRIPT_DIR.
+find_bundled_vbmeta() {
+    local deb_dir="/usr/share/FlashTool/assets/ps11"
+    for dir in "$deb_dir" "$SCRIPT_DIR"; do
+        for name in vbmeta_verification_disabled.img vbmeta.img; do
+            if [[ -f "$dir/$name" ]]; then
+                echo "$dir/$name" && return 0
+            fi
+        done
+    done
+    echo ""
+}
+
+# Like flash_partition but runs in bootloader mode (no preflight/wait_for_device overhead).
+# Used inside main_jenkins() bootloader phase.
+fb_flash_slot() {
+    local partition="$1"
+    local image="$2"
+    local image_path=""
+
+    if [[ -f "${SCRIPT_DIR}/${image}" ]]; then
+        image_path="${SCRIPT_DIR}/${image}"
+    elif [[ -f "${KIRA_DIR}/${image}" ]]; then
+        image_path="${KIRA_DIR}/${image}"
+    else
+        return 0
+    fi
+
+    local size_mb
+    size_mb=$(du -m "${image_path}" 2>/dev/null | awk '{print $1}')
+
+    log_step "Flashing ${BOLD}${partition}${NC} ← ${image} (${size_mb}MB)"
+    if fb_exec flash "${partition}" "${image_path}"; then
+        log_success "${partition} OK"
+    else
+        log_warn "Skipped ${partition}"
+        SKIPPED=$((SKIPPED + 1))
+    fi
 }
 
 # Auto-detect if sudo is needed for fastboot
@@ -383,6 +441,7 @@ show_help() {
       -n, --dry-run           Show commands without executing
       -y, --yes               Skip all confirmations
       -S, --serial SERIAL     Specify device serial number
+      --rom-type TYPE         Override auto-detect: official | jenkins
       -h, --help              Show this help message
 
   EXAMPLES:
@@ -461,6 +520,14 @@ while [[ $# -gt 0 ]]; do
             DEVICE_SERIAL="$2"
             shift 2
             ;;
+        --rom-type)
+            ROM_TYPE="${2,,}"
+            case "${ROM_TYPE}" in
+                official|jenkins) ;;
+                *) log_fatal "--rom-type must be 'official' or 'jenkins'" ;;
+            esac
+            shift 2
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -514,47 +581,87 @@ validate_environment() {
     # Check critical image files
     log_info "Checking firmware images..."
 
-    local critical_images=(
-        "${KIRA_DIR}/abl.elf"
-        "${KIRA_DIR}/tz.mbn"
-        "${KIRA_DIR}/aop.mbn"
-        "${KIRA_DIR}/xbl_s.melf"
-        "${SCRIPT_DIR}/boot.img"
-        "${SCRIPT_DIR}/system.img"
-        "${SCRIPT_DIR}/vendor.img"
-    )
+    if [[ "${ROM_TYPE}" == "jenkins" ]]; then
+        # Jenkins ROM: only system, system_ext, pvmfw, and variant files needed
+        local jenkins_images=(
+            "${SCRIPT_DIR}/system.img"
+            "${SCRIPT_DIR}/system_ext-kira.img"
+            "${SCRIPT_DIR}/pvmfw.img"
+        )
+        local missing=0
+        for img in "${jenkins_images[@]}"; do
+            if [[ ! -f "${img}" ]]; then
+                log_warn "Missing: ${img}"
+            fi
+        done
 
-    local missing=0
-    for img in "${critical_images[@]}"; do
-        if [[ ! -f "${img}" ]]; then
-            log_error "Missing: ${img}"
+        local product_img="product-${VARIANT}.img"
+        local vbmeta_sys_img="vbmeta_system-${VARIANT}.img"
+
+        if [[ -f "${VARIANT_DIR}/${product_img}" ]]; then
+            log_success "Variant product image: ${product_img}"
+        elif [[ -f "${SCRIPT_DIR}/${product_img}" ]]; then
+            log_success "Variant product image: ${SCRIPT_DIR}/${product_img}"
+        else
+            log_error "Missing: ${product_img}"
             missing=$((missing + 1))
         fi
-    done
 
-    if [[ ${missing} -gt 0 ]]; then
-        log_fatal "${missing} critical image(s) missing. Ensure firmware package is complete."
-    fi
-    log_success "All critical images found"
+        if [[ -f "${VARIANT_DIR}/${vbmeta_sys_img}" ]]; then
+            log_success "Variant vbmeta_system image: ${vbmeta_sys_img}"
+        elif [[ -f "${SCRIPT_DIR}/${vbmeta_sys_img}" ]]; then
+            log_success "Variant vbmeta_system image: ${SCRIPT_DIR}/${vbmeta_sys_img}"
+        else
+            log_error "Missing: ${vbmeta_sys_img}"
+            missing=$((missing + 1))
+        fi
 
-    # Variant-specific images
-    local product_img="product-${VARIANT}.img"
-    local vbmeta_sys_img="vbmeta_system-${VARIANT}.img"
-
-    if [[ -f "${KIRA_DIR}/${product_img}" ]]; then
-        log_success "Variant product image: ${product_img}"
-    elif [[ -f "${root_variant_dir}/${product_img}" ]]; then
-        log_success "Variant product image: ${root_variant_dir}/${product_img}"
+        if [[ ${missing} -gt 0 ]]; then
+            log_fatal "${missing} critical image(s) missing. Ensure Jenkins firmware package is complete."
+        fi
     else
-        log_warn "Variant product image not found: ${product_img}"
-    fi
+        # Official ROM: all critical images required
+        local critical_images=(
+            "${KIRA_DIR}/abl.elf"
+            "${KIRA_DIR}/tz.mbn"
+            "${KIRA_DIR}/aop.mbn"
+            "${KIRA_DIR}/xbl_s.melf"
+            "${SCRIPT_DIR}/boot.img"
+            "${SCRIPT_DIR}/system.img"
+            "${SCRIPT_DIR}/vendor.img"
+        )
 
-    if [[ -f "${KIRA_DIR}/${vbmeta_sys_img}" ]]; then
-        log_success "Variant vbmeta_system image: ${vbmeta_sys_img}"
-    elif [[ -f "${root_variant_dir}/${vbmeta_sys_img}" ]]; then
-        log_success "Variant vbmeta_system image: ${root_variant_dir}/${vbmeta_sys_img}"
-    else
-        log_warn "Variant vbmeta_system image not found: ${vbmeta_sys_img}"
+        local missing=0
+        for img in "${critical_images[@]}"; do
+            if [[ ! -f "${img}" ]]; then
+                log_error "Missing: ${img}"
+                missing=$((missing + 1))
+            fi
+        done
+
+        if [[ ${missing} -gt 0 ]]; then
+            log_fatal "${missing} critical image(s) missing. Ensure firmware package is complete."
+        fi
+
+        # Variant-specific images (for official only)
+        local product_img="product-${VARIANT}.img"
+        local vbmeta_sys_img="vbmeta_system-${VARIANT}.img"
+
+        if [[ -f "${KIRA_DIR}/${product_img}" ]]; then
+            log_success "Variant product image: ${product_img}"
+        elif [[ -f "${root_variant_dir}/${product_img}" ]]; then
+            log_success "Variant product image: ${root_variant_dir}/${product_img}"
+        else
+            log_warn "Variant product image not found: ${product_img}"
+        fi
+
+        if [[ -f "${KIRA_DIR}/${vbmeta_sys_img}" ]]; then
+            log_success "Variant vbmeta_system image: ${vbmeta_sys_img}"
+        elif [[ -f "${root_variant_dir}/${vbmeta_sys_img}" ]]; then
+            log_success "Variant vbmeta_system image: ${root_variant_dir}/${vbmeta_sys_img}"
+        else
+            log_warn "Variant vbmeta_system image not found: ${vbmeta_sys_img}"
+        fi
     fi
 
     # Print confirmation summary
@@ -565,7 +672,8 @@ validate_environment() {
     echo -e "${BOLD}  │${NC}  Device:       ${CYAN}PS11 (Sharp Aquos KIRA)${NC}      ${BOLD}│${NC}"
     echo -e "${BOLD}  │${NC}  Variant:      ${CYAN}${VARIANT^^}${NC}$(printf '%*s' $((24 - ${#VARIANT})) '')${BOLD}│${NC}"
     echo -e "${BOLD}  │${NC}  Target Slot:  ${CYAN}${SLOT^^}${NC}                        ${BOLD}│${NC}"
-    echo -e "${BOLD}  │${NC}  Firmware:     ${CYAN}A4100_2026${NC}                 ${BOLD}│${NC}"
+    local fw_label="${ROM_TYPE} ($(basename "${SCRIPT_DIR}"))"
+    echo -e "${BOLD}  │${NC}  Package:      ${CYAN}${fw_label}${NC}$(printf '%*s' $((26 - ${#fw_label})) '')${BOLD}│${NC}"
     echo -e "${BOLD}  │${NC}  Android:      ${CYAN}16 (API 36)${NC}                ${BOLD}│${NC}"
     echo -e "${BOLD}  │${NC}  AVB Disabled: ${CYAN}${DISABLE_AVB}${NC}$(printf '%*s' $((22 - ${#DISABLE_AVB})) '')${BOLD}│${NC}"
     echo -e "${BOLD}  │${NC}  Wipe Data:    ${CYAN}${WIPE_USERDATA}${NC}$(printf '%*s' $((22 - ${#WIPE_USERDATA})) '')${BOLD}│${NC}"
@@ -842,22 +950,204 @@ flash_userdata_and_finalize() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Jenkins ROM Flash Flow (partial ROM)
+# Jenkins ROM includes: system.img, system_ext-kira.img, pvmfw.img,
+# variant/{product-*.img, vbmeta_system-*.img}
+# No bootloader, boot, init_boot, or radio firmware.
+# ──────────────────────────────────────────────────────────────────────────────
+
+main_jenkins() {
+    log_header "PS11 JENKINS ROM — PARTIAL FLASH"
+
+    local vbmeta
+    vbmeta="$(find_bundled_vbmeta)"
+    if [[ -z "$vbmeta" ]]; then
+        log_warn "vbmeta_verification_disabled.img not found — skipping vbmeta flash"
+        log_warn "Device may fail to boot due to AVB chain verification failure"
+    fi
+
+    # Determine images
+    local product_img="product-${VARIANT}.img"
+    local vbmeta_sys_img="vbmeta_system-${VARIANT}.img"
+    local system_ext_img="system_ext-kira.img"
+
+    # Show summary
+    echo ""
+    echo -e "${BOLD}  ┌─────────────────────────────────────────────┐${NC}"
+    echo -e "${BOLD}  │     JENKINS FLASH CONFIGURATION SUMMARY     │${NC}"
+    echo -e "${BOLD}  ├─────────────────────────────────────────────┤${NC}"
+    echo -e "${BOLD}  │${NC}  Device:       ${CYAN}PS11 (Sharp Aquos KIRA)${NC}      ${BOLD}│${NC}"
+    echo -e "${BOLD}  │${NC}  Variant:      ${CYAN}${VARIANT^^}${NC}$(printf '%*s' $((24 - ${#VARIANT})) '')${BOLD}│${NC}"
+    echo -e "${BOLD}  │${NC}  Target Slot:  ${CYAN}${SLOT^^}${NC}                        ${BOLD}│${NC}"
+    echo -e "${BOLD}  │${NC}  ROM Type:     ${YELLOW}Jenkins (partial)${NC}            ${BOLD}│${NC}"
+    echo -e "${BOLD}  │${NC}  Wipe Data:    ${CYAN}${WIPE_USERDATA}${NC}$(printf '%*s' $((22 - ${#WIPE_USERDATA})) '')${BOLD}│${NC}"
+    echo -e "${BOLD}  │${NC}  Dry Run:      ${CYAN}${DRY_RUN}${NC}$(printf '%*s' $((22 - ${#DRY_RUN})) '')${BOLD}│${NC}"
+    echo -e "${BOLD}  └─────────────────────────────────────────────┘${NC}"
+
+    if [[ "${AUTO_YES}" != true ]] && [[ "${DRY_RUN}" != true ]]; then
+        echo ""
+        log_warn "═══════════════════════════════════════════════════════════"
+        log_warn "Jenkins ROM is a PARTIAL firmware package."
+        log_warn "Only system + system_ext + product + vbmeta are included."
+        log_warn "Bootloader and radio firmware are NOT updated."
+        log_warn "═══════════════════════════════════════════════════════════"
+        echo ""
+        read -rp "    Proceed with Jenkins flash? [y/N] " answer
+        case "${answer}" in
+            [yY][eE][sS]|[yY]) ;;
+            *) log_fatal "Aborted by user." ;;
+        esac
+    fi
+
+    local start_time
+    start_time=$(date +%s)
+
+    # ── Phase 1: Bootloader mode — flash vbmeta + set slot ──
+    detect_sudo
+    wait_for_device "fastboot"
+
+    log_phase "1 — BOOTSTRAP (bootloader mode)"
+    STEP=0
+    TOTAL_STEPS=3
+
+    # Flash vbmeta with verity disabled to both slots
+    if [[ -n "$vbmeta" ]]; then
+        log_step "Flashing vbmeta with verification disabled (both slots)"
+        local vb_errors=0
+        if ! fb_exec flash --disable-verity --disable-verification vbmeta_a "$vbmeta"; then
+            log_warn "vbmeta_a flash failed"
+            vb_errors=$((vb_errors + 1))
+        else
+            log_success "vbmeta_a OK"
+        fi
+        if ! fb_exec flash --disable-verity --disable-verification vbmeta_b "$vbmeta"; then
+            log_warn "vbmeta_b flash failed"
+            vb_errors=$((vb_errors + 1))
+        else
+            log_success "vbmeta_b OK"
+        fi
+        if [[ ${vb_errors} -gt 0 ]]; then
+            ERRORS=$((ERRORS + vb_errors))
+        fi
+    fi
+
+    # Set active slot before fastbootd
+    log_step "Setting active slot to ${BOLD}${SLOT}${NC}"
+    fb_exec --set-active="${SLOT}"
+
+    log_success "Phase 1 complete"
+
+    # ── Phase 2: Fastbootd mode — flash dynamic partitions ──
+    log_info "Rebooting to fastbootd mode..."
+    fb_exec reboot fastboot
+    sleep 15
+    wait_for_device "fastbootd" 120
+
+    log_phase "2 — DYNAMIC PARTITIONS (fastbootd mode)"
+    STEP=0
+    TOTAL_STEPS=6
+
+    # Wipe super
+    if [[ -f "${SCRIPT_DIR}/super_empty.img" ]]; then
+        log_step "Wiping super partition"
+        fb_exec wipe-super "${SCRIPT_DIR}/super_empty.img"
+    fi
+
+    # Delete slot_b logical partitions to free super space for slot_a resize
+    if [[ "${DRY_RUN}" != true ]]; then
+        for part in system_b system_ext_b product_b; do
+            fb_exec delete-logical-partition "$part" 2>/dev/null || true
+        done
+    fi
+
+    # Flash dynamic partitions
+    flash_partition "system_${SLOT}"         "system.img"
+    flash_partition "system_ext_${SLOT}"     "${system_ext_img}"
+    flash_partition "product_${SLOT}"        "${product_img}"
+
+    # ── Phase 3: Userdata ──
+    if [[ "${WIPE_USERDATA}" == true ]]; then
+        log_step "Erasing userdata"
+        fb_exec erase userdata
+        fb_exec erase metadata 2>/dev/null || true
+    else
+        log_info "Skipping userdata (use -w to wipe)"
+    fi
+
+    log_success "Phase 2 complete"
+
+    # ── Phase 4: Reboot to bootloader — flash vbmeta_system + reboot ──
+    log_info "Rebooting to bootloader for finalize..."
+    fb_exec reboot bootloader
+    sleep 5
+    wait_for_device "fastboot" 60
+
+    log_phase "3 — FINALIZE (bootloader mode)"
+    STEP=0
+    TOTAL_STEPS=3
+
+    # Flash vbmeta_system
+    flash_partition "vbmeta_system_${SLOT}"  "${vbmeta_sys_img}"
+
+    # Set active slot
+    log_step "Setting active slot to ${BOLD}${SLOT}${NC}"
+    fb_exec --set-active="${SLOT}"
+
+    # Reboot
+    log_step "Rebooting device..."
+    fb_exec reboot
+
+    # Summary
+    local end_time elapsed
+    end_time=$(date +%s)
+    elapsed=$((end_time - start_time))
+
+    log_header "JENKINS FLASH COMPLETE"
+    echo -e "  ${GREEN}${BOLD}Duration:${NC}  $((elapsed / 60))m $((elapsed % 60))s"
+    echo -e "  ${GREEN}${BOLD}Errors:${NC}    ${ERRORS}"
+    echo -e "  ${YELLOW}${BOLD}Skipped:${NC}   ${SKIPPED}"
+    echo -e "  ${GREEN}${BOLD}Variant:${NC}   ${VARIANT^^}"
+    echo -e "  ${GREEN}${BOLD}Slot:${NC}      ${SLOT^^}"
+    echo ""
+    if [[ ${ERRORS} -gt 0 ]]; then
+        log_warn "${ERRORS} error(s) occurred. Device may not boot correctly."
+    else
+        log_success "All partitions flashed successfully!"
+        log_info "Device is rebooting. First boot may take 5-10 minutes."
+    fi
+    echo ""
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main Execution
 # ──────────────────────────────────────────────────────────────────────────────
 
 main() {
     log_header "SHARP AQUOS KIRA (PS11) — ROM FLASH TOOL"
-    echo -e "${DIM}  Firmware: BIN_SECBOOT_KIRA_16_A4100_2026${NC}"
-    echo -e "${DIM}  Script:   $(basename "$0") v1.0${NC}"
-    echo -e "${DIM}  Date:     $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 
-    # Validate
+    # Detect ROM type first (before validation)
+    detect_rom_type
+    echo -e "${DIM}  ROM type:  ${ROM_TYPE}${NC}"
+    echo -e "${DIM}  Firmware:  $(basename "${SCRIPT_DIR}")${NC}"
+    echo -e "${DIM}  Script:    $(basename "$0") v1.0${NC}"
+    echo -e "${DIM}  Date:      $(date '+%Y-%m-%d %H:%M:%S')${NC}"
+
+    # Validate (uses ROM_TYPE to decide which images are required)
     validate_environment
 
     if [[ "${DRY_RUN}" == true ]]; then
         echo ""
         log_warn "DRY-RUN MODE: No commands will be executed"
     fi
+
+    # Dispatch to Jenkins flow if detected
+    if [[ "${ROM_TYPE}" == "jenkins" ]]; then
+        main_jenkins
+        return
+    fi
+
+    # ── Official flow below ──
 
     # Confirm before proceeding
     if [[ "${BOOTLOADER_ONLY}" == true ]]; then
