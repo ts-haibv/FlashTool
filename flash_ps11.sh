@@ -196,6 +196,55 @@ device_in_fastbootd() {
     timeout 5 "${fb_cmd[@]}" getvar is-userspace 2>&1 | grep -q "is-userspace: yes"
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Device state helpers: auto-enter bootloader / fastbootd
+# ──────────────────────────────────────────────────────────────────────────────
+
+enter_bootloader() {
+    if [[ "${DRY_RUN}" == true ]]; then
+        log_info "DRY-RUN: assuming device in fastboot mode"
+        return 0
+    fi
+    if device_in_fastboot; then
+        log_info "Device already in fastboot mode"
+        return 0
+    fi
+    if device_in_adb; then
+        log_info "Rebooting to bootloader via adb..."
+        adb reboot bootloader 2>/dev/null || true
+        sleep 5
+        wait_for_device "fastboot" 45 || die "Device did not enter bootloader"
+        return 0
+    fi
+    if device_in_fastbootd; then
+        log_info "Rebooting to bootloader from fastbootd..."
+        fb_exec reboot-bootloader 2>/dev/null || true
+        sleep 5
+        wait_for_device "fastboot" 45 || die "Device did not enter bootloader"
+        return 0
+    fi
+    die "No device found in adb/fastboot/fastbootd mode"
+}
+
+enter_fastbootd() {
+    if [[ "${DRY_RUN}" == true ]]; then
+        log_info "DRY-RUN: assuming device in fastbootd mode"
+        return 0
+    fi
+    if device_in_fastbootd; then
+        log_info "Device already in fastbootd mode"
+        return 0
+    fi
+    log_info "Rebooting to fastbootd..."
+    fb_exec reboot fastboot
+    sleep 15
+    wait_for_device "fastbootd" 120 || die "Device did not enter fastbootd"
+}
+
+die() {
+    log_fatal "$@"
+}
+
 # Auto-detect if sudo is needed for fastboot
 detect_sudo() {
     if [[ "${DRY_RUN}" == true ]]; then
@@ -718,38 +767,44 @@ validate_environment() {
 # Phase 1: Flash Bootloader & Firmware Partitions (fastboot mode)
 # ──────────────────────────────────────────────────────────────────────────────
 
-flash_bootloader_firmware() {
-    log_phase "1 — BOOTLOADER & FIRMWARE (fastboot mode)"
+flash_official_bootstrap() {
+    log_phase "1 — BOOTSTRAP (bootloader mode)"
 
     detect_sudo
-    wait_for_device "fastboot"
+    enter_bootloader
 
     # ── Pre-flight diagnostics ──
-    log_info "Running pre-flight device diagnostics..."
     preflight_check
 
-    # Calculate total steps for this phase
     STEP=0
-    TOTAL_STEPS=39  # 32 partition flashes + apdp + soccp + storsec + spu_service
+    TOTAL_STEPS=8
 
-    # ── LUN4: Boot Images (flash these FIRST — most likely to succeed) ──
-    log_info "Flashing boot images (LUN4)..."
+    log_info "Flashing bootstrap images needed for fastbootd..."
     flash_partition "boot_${SLOT}"          "boot.img"
     flash_partition "init_boot_${SLOT}"     "init_boot.img"
     flash_partition "vendor_boot_${SLOT}"   "vendor_boot.img"
     flash_partition "dtbo_${SLOT}"          "dtbo.img"
     flash_partition "recovery_${SLOT}"      "recovery.img"
+    flash_partition "pvmfw_${SLOT}"         "pvmfw.img"
 
-    # ── LUN4: AVB / Version ──
-    log_info "Flashing AVB & version..."
     if [[ "${DISABLE_AVB}" == true ]]; then
         log_warn "Using vbmeta with verification DISABLED"
         flash_partition "vbmeta_${SLOT}" "vbmeta_verification_disabled.img"
     else
         flash_partition "vbmeta_${SLOT}" "vbmeta.img"
     fi
-    flash_partition "version_${SLOT}"       "version.img"
-    flash_partition "pvmfw_${SLOT}"         "pvmfw.img"
+
+    log_step "Setting active slot to ${BOLD}${SLOT}${NC}"
+    fb_exec --set-active="${SLOT}"
+
+    log_success "Phase 1 complete: Bootstrap partitions flashed"
+}
+
+flash_official_firmware() {
+    log_phase "3 — FIRMWARE & FINALIZE (bootloader mode)"
+
+    STEP=0
+    TOTAL_STEPS=40
 
     # ── LUN4: ABL + Core Firmware ──
     log_info "Flashing ABL & core firmware (LUN4)..."
@@ -766,6 +821,7 @@ flash_bootloader_firmware() {
     flash_partition "shrm_${SLOT}"          "shrm.elf"
     flash_partition "sdl_${SLOT}"           "shprloader.img"
     flash_partition "ssfd_${SLOT}"          "ssfd.img"
+    flash_partition "version_${SLOT}"       "version.img"
 
     # ── LUN4: Modem & Radio ──
     log_info "Flashing modem & radio firmware..."
@@ -792,34 +848,14 @@ flash_bootloader_firmware() {
 
     # ── Additional firmware images ──
     log_info "Flashing additional firmware (apdp, soccp, spu_service, storsec)..."
-    # apdp: ADSP protected data (root-level)
     if [[ -f "${SCRIPT_DIR}/apdp.mbn" ]]; then
         flash_partition "apdp_${SLOT}"          "apdp.mbn"          optional
     fi
-    # soccp: System-on-Chip Coprocessor firmware
     flash_partition "soccp_${SLOT}"         "soccp.mbn"         optional
-    # spu_service: Secure Processing Unit
     flash_partition "spu_service_${SLOT}"   "spu_service.mbn"   optional
-    # storsec: Storage security (LUN0, non-slot but needed for UFS init)
     flash_partition "storsec"               "storsec.mbn"       optional
 
-    if [[ ${SKIPPED} -gt 0 ]]; then
-        log_warn "${SKIPPED} partition(s) skipped (LUN1/secure — use QFIL for these)"
-    fi
-
-    log_success "Phase 1 complete: Bootloader & firmware flashed"
-}
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Phase 2: Flash Non-Slot Partitions (fastboot mode)
-# ──────────────────────────────────────────────────────────────────────────────
-
-flash_non_slot_partitions() {
-    log_phase "2 — NON-SLOT PARTITIONS (fastboot mode)"
-
-    STEP=0
-    TOTAL_STEPS=10
-
+    # ── Non-slot partitions ──
     log_info "Flashing non-slot partitions (LUN0)..."
     flash_partition "persist"         "persist.img"
     flash_partition "metadata"        "metadata.img"
@@ -829,18 +865,17 @@ flash_non_slot_partitions() {
     flash_partition "durable_sys"     "durable_sys.img"
 
     # erase misc to clear any stale boot commands
-    log_step "Erasing misc (clear boot commands)"
+    log_step "Erasing misc"
     fb_exec erase misc
 
     # ── SKU partition (fixed partition, must be flashed in fastboot mode) ──
-    # IMPORTANT: sku is NOT a dynamic partition — fastbootd cannot see it!
     local sku_path="${KIRA_DIR}/${VARIANT^}/sku.img"
     if [[ "${VARIANT}" == "kira" ]]; then
         sku_path="${KIRA_DIR}/Kira/sku.img"
     fi
     if [[ -f "${sku_path}" ]]; then
         local saved_errors_sku=${ERRORS}
-        log_step "Flashing ${BOLD}sku${NC} ← ${sku_path##*/} (fastboot mode)"
+        log_step "Flashing ${BOLD}sku${NC} ← ${sku_path##*/}"
         if ! fb_exec flash sku "${sku_path}"; then
             log_warn "sku flash failed — skipping (optional)"
             ERRORS=${saved_errors_sku}
@@ -850,8 +885,7 @@ flash_non_slot_partitions() {
         fi
     fi
 
-    # ── Kitting partition (fixed partition, must be flashed in fastboot mode) ──
-    # IMPORTANT: kitting is NOT a dynamic partition — fastbootd cannot see it!
+    # ── Kitting partition ──
     local kitting_path="${KIRA_DIR}/${VARIANT^}/kitting.img"
     case "${VARIANT}" in
         kira) kitting_path="${KIRA_DIR}/Kira/kitting.img" ;;
@@ -861,7 +895,7 @@ flash_non_slot_partitions() {
     esac
     if [[ -f "${kitting_path}" ]]; then
         local saved_errors_kit=${ERRORS}
-        log_step "Flashing ${BOLD}kitting${NC} ← ${kitting_path##*/} (fastboot mode)"
+        log_step "Flashing ${BOLD}kitting${NC} ← ${kitting_path##*/}"
         if ! fb_exec flash kitting "${kitting_path}"; then
             log_warn "kitting flash failed — skipping (optional)"
             ERRORS=${saved_errors_kit}
@@ -873,25 +907,48 @@ flash_non_slot_partitions() {
         log_info "No kitting image for variant ${VARIANT^^} — skipping"
     fi
 
-    log_success "Phase 2 complete: Non-slot partitions flashed"
+    if [[ ${SKIPPED} -gt 0 ]]; then
+        log_warn "${SKIPPED} partition(s) skipped (LUN1/secure — use QFIL for these)"
+    fi
+
+    # Userdata
+    if [[ "${WIPE_USERDATA}" == true ]]; then
+        local userdata_img="userdata-${VARIANT}.img"
+        if [[ -f "${KIRA_DIR}/${userdata_img}" ]]; then
+            flash_partition "userdata" "${userdata_img}"
+        elif [[ -f "${KIRA_DIR}/userdata-kira.img" ]]; then
+            log_info "Variant generic userdata not found, using userdata-kira.img (Ext4 prebuilt)"
+            flash_partition "userdata" "userdata-kira.img"
+        else
+            log_step "Formatting userdata (mke2fs)"
+            fb_exec format:ext4 userdata
+        fi
+    else
+        log_info "Skipping userdata (use -w to wipe)"
+    fi
+
+    # Set active slot
+    log_step "Setting active slot to ${BOLD}${SLOT}${NC}"
+    fb_exec --set-active="${SLOT}"
+
+    # Reboot
+    log_step "Rebooting device..."
+    fb_exec reboot
+
+    log_success "Flash complete"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Phase 3: Flash Dynamic Partitions (fastbootd mode)
+# Phase 2: Flash Dynamic Partitions (fastbootd mode)
 # ──────────────────────────────────────────────────────────────────────────────
 
 flash_dynamic_partitions() {
-    log_phase "3 — DYNAMIC PARTITIONS (fastbootd mode)"
+    enter_fastbootd
 
-    # Reboot to fastbootd for dynamic partition support
-    log_info "Rebooting to fastbootd mode..."
-    fb_exec reboot fastboot
-    # UFS 4.1 init + fastbootd userspace boot can take 15-30s — give it time
-    sleep 15
-    wait_for_device "fastbootd" 120
+    log_phase "2 — DYNAMIC PARTITIONS (fastbootd mode)"
 
     STEP=0
-    TOTAL_STEPS=10
+    TOTAL_STEPS=11
 
     # Wipe super partition first
     log_step "Wiping super partition with empty layout"
@@ -934,49 +991,7 @@ flash_dynamic_partitions() {
     # SKU and kitting are flashed in Phase 2 (fastboot mode) — NOT here.
     # fastbootd mode cannot see fixed partitions. Removed from Phase 3.
 
-    log_success "Phase 3 complete: Dynamic partitions flashed"
-}
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Phase 4: Userdata & Finalize
-# ──────────────────────────────────────────────────────────────────────────────
-
-flash_userdata_and_finalize() {
-    log_phase "4 — USERDATA & FINALIZE"
-
-    STEP=0
-    TOTAL_STEPS=4
-
-    # Flash userdata
-    if [[ "${WIPE_USERDATA}" == true ]]; then
-        # IMPORTANT: Always flash userdata-kira.img to provide valid Ext4 headers.
-        # fastboot erase zeroes the partition and causes Sharp init to panic.
-        local userdata_img="userdata-${VARIANT}.img"
-        if [[ -f "${KIRA_DIR}/${userdata_img}" ]]; then
-            flash_partition "userdata" "${userdata_img}"
-        elif [[ -f "${KIRA_DIR}/userdata-kira.img" ]]; then
-            log_info "Variant generic userdata not found, using userdata-kira.img (Ext4 prebuilt)"
-            flash_partition "userdata" "userdata-kira.img"
-        else
-            log_step "Formatting userdata (mke2fs)"
-            fb_exec format:ext4 userdata
-        fi
-    else
-        log_info "Skipping userdata (use -w to wipe)"
-    fi
-
-    # Set active slot
-    log_step "Setting active slot to ${BOLD}${SLOT}${NC}"
-    fb_exec set_active "${SLOT}"
-
-    # Note: vbmeta already flashed in Phase 1 with correct image
-    # (vbmeta_verification_disabled.img if -d flag was used)
-
-    # Reboot
-    log_step "Rebooting device..."
-    fb_exec reboot
-
-    log_success "Phase 4 complete: Finalized"
+    log_success "Phase 2 complete: Dynamic partitions flashed"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1034,20 +1049,7 @@ main_jenkins() {
 
     # ── Phase 1: Bootloader mode — flash vbmeta + set slot ──
     detect_sudo
-
-    # Auto-enter bootloader from any state
-    if device_in_fastboot; then
-        log_info "Device already in fastboot mode"
-    elif device_in_adb; then
-        log_info "Rebooting to bootloader via adb..."
-        adb reboot bootloader 2>/dev/null || true
-        sleep 5
-    elif device_in_fastbootd; then
-        log_info "Rebooting to bootloader from fastbootd..."
-        fb_exec reboot-bootloader 2>/dev/null || true
-        sleep 5
-    fi
-    wait_for_device "fastboot"
+    enter_bootloader
 
     log_phase "1 — BOOTSTRAP (bootloader mode)"
     STEP=0
@@ -1081,10 +1083,7 @@ main_jenkins() {
     log_success "Phase 1 complete"
 
     # ── Phase 2: Fastbootd mode — flash dynamic partitions ──
-    log_info "Rebooting to fastbootd mode..."
-    fb_exec reboot fastboot
-    sleep 15
-    wait_for_device "fastbootd" 120
+    enter_fastbootd
 
     log_phase "2 — DYNAMIC PARTITIONS (fastbootd mode)"
     STEP=0
@@ -1119,7 +1118,7 @@ main_jenkins() {
 
     log_success "Phase 2 complete"
 
-    # ── Phase 4: Reboot to bootloader — flash vbmeta_system + reboot ──
+    # ── Phase 3: Reboot to bootloader — flash vbmeta_system + reboot ──
     log_info "Rebooting to bootloader for finalize..."
     fb_exec reboot bootloader
     sleep 5
@@ -1206,16 +1205,17 @@ main() {
 
     # Execute phases based on mode
     if [[ "${BOOTLOADER_ONLY}" == true ]]; then
-        flash_bootloader_firmware
+        flash_official_bootstrap
+        flash_official_firmware
     elif [[ "${SYSTEM_ONLY}" == true ]]; then
+        flash_official_bootstrap
         flash_dynamic_partitions
-        flash_userdata_and_finalize
+        flash_official_firmware
     else
-        # Full flash sequence
-        flash_bootloader_firmware
-        flash_non_slot_partitions
+        # Full flash: 1=bootstrap → 2=dynamic → 3=firmware+userdata+reboot
+        flash_official_bootstrap
         flash_dynamic_partitions
-        flash_userdata_and_finalize
+        flash_official_firmware
     fi
 
     # Summary
