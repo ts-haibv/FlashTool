@@ -18,6 +18,7 @@ from flash_tool.flash_worker import FlashWorker, FlashProgress, StepStatus
 from flash_tool.profiles.g6_ramba import build_g6_ramba_steps, build_suw_only_steps
 from flash_tool.profiles.other_model import build_other_model_steps
 from flash_tool.profiles.script_device import build_script_device_steps
+from flash_tool.profiles.auto_detect import detect_device, detect_variant, AUTO_DETECT_LABEL
 from flash_tool.ui.theme import COLORS, FONTS, SPACING
 from flash_tool.ui.step_widget import StepWidget
 from flash_tool.ui.log_panel import LogPanel
@@ -104,6 +105,8 @@ class MainWindow(ctk.CTk):
         self.worker: FlashWorker | None = None
         self.step_widgets: dict[int, StepWidget] = {}
         self.image_combos: dict[str, ctk.CTkComboBox] = {}
+        self.auto_detected_device: str | None = None
+        self.auto_detected_variant: str | None = None
 
         # Device polling
         self._poll_running = True
@@ -200,7 +203,7 @@ class MainWindow(ctk.CTk):
 
         self.model_combo = ctk.CTkComboBox(
             section_model,
-            values=["G6", "Other Model", "PS11", "E11", "E10"],
+            values=["G6", "Other Model", AUTO_DETECT_LABEL],
             variable=self.current_model,
             font=FONTS["body_sm"],
             dropdown_font=FONTS["body_sm"],
@@ -561,12 +564,13 @@ class MainWindow(ctk.CTk):
             self.fastbootd_checkbox.pack_forget()
             self.fastboot_already_checkbox.pack_forget()
 
-            if self.current_model.get() in self.SCRIPT_PROFILES:
+            script_device = self._resolve_script_device()
+            if script_device:
                 self.suw_checkbox.configure(state="disabled")
                 self.strategy_label.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
                 self._configure_script_variant_selector()
-                script_name = self.SCRIPT_PROFILES[self.current_model.get()]["script"]
-                default_args = self.SCRIPT_PROFILES[self.current_model.get()].get("default_args", [])
+                script_name = self.SCRIPT_PROFILES[script_device]["script"]
+                default_args = self.SCRIPT_PROFILES[script_device].get("default_args", [])
                 wipe_note = "wipe enabled" if "--wipe" in default_args else "dirty flash"
                 self.strategy_label.configure(
                     text=f"📜  {script_name} • {wipe_note}",
@@ -577,18 +581,21 @@ class MainWindow(ctk.CTk):
                 self.strategy_label.pack_forget()
                 self.fastbootd_checkbox.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["xs"]))
                 self.fastboot_already_checkbox.pack(fill="x", padx=SPACING["sm"], pady=(0, SPACING["sm"]))
-            
+
             if self.current_model.get() == "Other Model" and hasattr(self, "detected_regions") and self.detected_regions:
                 # Trigger variant update for Other Model
                 self._on_region_selected(self.region_combo.get())
-            
+
+            if self.current_model.get() == AUTO_DETECT_LABEL and self.rom_path:
+                self._scan_rom_path(self.rom_path)
+
         self._update_flash_steps()
         self.log_panel.append(f"📱 Switched model profile to: {choice}")
 
     def _update_profile_guidance(self):
         """Update profile-specific helper text around folder/image selection."""
         current_model = self.current_model.get()
-        if current_model in self.SCRIPT_PROFILES:
+        if self._resolve_script_device():
             self.images_title_label.configure(text="📦  Firmware Package")
             self.images_hint_label.configure(
                 text="Folder contents are handled by the device script. Variant controls which model subfolder is used."
@@ -765,7 +772,7 @@ class MainWindow(ctk.CTk):
 
         # Scan for images
         self.detected_images = scan_rom_folder(path)
-        
+
         # Scan for all subdirectories that contain actual flashing images
         regions = set()
         region_keys = ["product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"]
@@ -774,14 +781,43 @@ class MainWindow(ctk.CTk):
                 parts = file_path.replace("\\", "/").split("/")
                 if len(parts) > 1:
                     regions.add(parts[0])
-                    
+
         self.detected_regions = sorted(list(regions))
         if self.current_model.get() == "Other Model":
             if self.detected_regions:
                 self._set_variant_selector(["— none —"] + self.detected_regions, self.detected_regions[0])
             else:
                 self._set_variant_selector(["— none —"], "— none —")
-            
+
+        # Auto-detect device when in auto mode
+        if self.current_model.get() == AUTO_DETECT_LABEL:
+            detected = detect_device(path)
+            if detected:
+                self.auto_detected_device = detected
+                self.auto_detected_variant = detect_variant(path, detected, self.SCRIPT_PROFILES)
+                if self.auto_detected_variant:
+                    self.selected_script_variants[detected] = self.auto_detected_variant
+                self.log_panel.append(
+                    f"🔍 Auto-detected device: {detected} ({self.auto_detected_variant or 'unknown variant'})"
+                )
+                # Update strategy label to reflect detected script
+                script_name = self.SCRIPT_PROFILES[detected]["script"]
+                default_args = self.SCRIPT_PROFILES[detected].get("default_args", [])
+                wipe_note = "wipe enabled" if "--wipe" in default_args else "dirty flash"
+                self.strategy_label.configure(
+                    text=f"📜  {script_name} • {wipe_note}",
+                    text_color=COLORS["text_secondary"],
+                )
+            else:
+                self.auto_detected_device = None
+                self.auto_detected_variant = None
+                self.log_panel.append("⚠️ Could not auto-detect device from ROM folder")
+                self.strategy_label.configure(
+                    text="Select a ROM folder to auto-detect device",
+                    text_color=COLORS["text_muted"],
+                )
+            self._update_flash_steps()
+
         self._update_region_visibility()
         self._update_rom_folder_summary()
 
@@ -818,13 +854,15 @@ class MainWindow(ctk.CTk):
             text_color=COLORS["accent_green"],
         )
 
-        if current_model in self.SCRIPT_PROFILES:
-            variants = self._get_script_variant_options(current_model)
-            selected_variant = self.selected_script_variants.get(current_model, variants[0])
-            default_args = self.SCRIPT_PROFILES[current_model].get("default_args", [])
+        script_device = self._resolve_script_device()
+        if script_device:
+            variants = self._get_script_variant_options(script_device)
+            selected_variant = self.selected_script_variants.get(script_device, variants[0])
+            default_args = self.SCRIPT_PROFILES[script_device].get("default_args", [])
             wipe_label = "wipe data enabled" if "--wipe" in default_args else "dirty flash"
+            display_device = current_model if current_model != AUTO_DETECT_LABEL else f"Auto → {script_device}"
             self.rom_summary_label.configure(
-                text=f"{current_model} package • variant {selected_variant} • {wipe_label}",
+                text=f"{display_device} package • variant {selected_variant} • {wipe_label}",
                 text_color=COLORS["text_secondary"],
             )
             return
@@ -839,7 +877,7 @@ class MainWindow(ctk.CTk):
     def _update_region_visibility(self):
         """Show or hide the region selection row based on model and regions."""
         current_model = self.current_model.get()
-        if current_model in self.SCRIPT_PROFILES:
+        if self._resolve_script_device():
             self._configure_script_variant_selector()
         elif hasattr(self, "detected_regions") and self.detected_regions and current_model == "Other Model":
             self._set_variant_selector(["— none —"] + self.detected_regions, self.region_combo.get())
@@ -853,9 +891,18 @@ class MainWindow(ctk.CTk):
         self.region_combo.set(selected_value)
         self.region_row.pack(fill="x", pady=(SPACING["sm"], 0))
 
-    def _get_script_variant_options(self, current_model: str) -> list[str]:
+    def _resolve_script_device(self) -> str | None:
+        """Return the actual script device name, or None if not in script mode."""
+        current_model = self.current_model.get()
+        if current_model in self.SCRIPT_PROFILES:
+            return current_model
+        if current_model == AUTO_DETECT_LABEL and self.auto_detected_device:
+            return self.auto_detected_device
+        return None
+
+    def _get_script_variant_options(self, device: str) -> list[str]:
         """Return script variants, preferring folders present in the selected ROM."""
-        config = self.SCRIPT_PROFILES[current_model]
+        config = self.SCRIPT_PROFILES[device]
         if not self.rom_path:
             return config["variants"]
 
@@ -867,26 +914,30 @@ class MainWindow(ctk.CTk):
         return detected or config["variants"]
 
     def _configure_script_variant_selector(self):
-        """Show fixed script variants for PS11/E11 profiles."""
-        current_model = self.current_model.get()
-        config = self.SCRIPT_PROFILES[current_model]
-        values = self._get_script_variant_options(current_model)
+        """Show fixed script variants for PS11/E11/E10 or auto-detected profiles."""
+        device = self._resolve_script_device()
+        if not device:
+            self.region_row.pack_forget()
+            return
+
+        config = self.SCRIPT_PROFILES[device]
+        values = self._get_script_variant_options(device)
         selected_variant = self.selected_script_variants.get(
-            current_model,
+            device,
             config["default_variant"],
         )
 
         if selected_variant not in values:
             selected_variant = config["default_variant"] if config["default_variant"] in values else values[0]
-            self.selected_script_variants[current_model] = selected_variant
+            self.selected_script_variants[device] = selected_variant
 
         self._set_variant_selector(values, selected_variant)
 
     def _on_region_selected(self, choice: str):
         """Update selected images based on region variant."""
-        current_model = self.current_model.get()
-        if current_model in self.SCRIPT_PROFILES:
-            self.selected_script_variants[current_model] = choice
+        script_device = self._resolve_script_device()
+        if script_device:
+            self.selected_script_variants[script_device] = choice
             self.log_panel.append(f"🌍 Selected Variant: {choice}")
             self._update_rom_folder_summary()
             self._update_flash_steps()
@@ -991,9 +1042,21 @@ class MainWindow(ctk.CTk):
             required = ["boot", "system", "vendor"]
             optional_with_steps = ["dtbo", "init_boot", "vbmeta", "recovery", "system_ext", "product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"]
         else:
+            script_device = self._resolve_script_device()
+            if not script_device:
+                if current_model == AUTO_DETECT_LABEL:
+                    messagebox.showerror(
+                        "Error",
+                        "Could not auto-detect device from ROM folder.\n\n"
+                        "The folder must contain device-specific files or variant directories.",
+                    )
+                else:
+                    messagebox.showerror("Error", f"Unknown model: {current_model}")
+                return
+
             required = []
             optional_with_steps = []
-            script_name = self.SCRIPT_PROFILES[current_model]["script"]
+            script_name = self.SCRIPT_PROFILES[script_device]["script"]
             app_root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
             script_candidates = [
                 os.path.join(self.rom_path, script_name),
@@ -1021,14 +1084,16 @@ class MainWindow(ctk.CTk):
             full_path = os.path.join(self.rom_path, img)
             total_size += get_file_size_mb(full_path)
 
-        if current_model in self.SCRIPT_PROFILES:
-            selected_variant = self.selected_script_variants[current_model]
-            script_display = self.SCRIPT_PROFILES[current_model]["script"]
-            default_args = self.SCRIPT_PROFILES[current_model].get("default_args", [])
+        script_device = self._resolve_script_device()
+        if script_device:
+            selected_variant = self.selected_script_variants.get(script_device, self.SCRIPT_PROFILES[script_device]["default_variant"])
+            script_display = self.SCRIPT_PROFILES[script_device]["script"]
+            default_args = self.SCRIPT_PROFILES[script_device].get("default_args", [])
             data_note = "⚠️  This will ERASE all data on the device!" if "--wipe" in default_args \
                 else "⚠️  Dirty flash — user data will be PRESERVED."
+            display_model = current_model if current_model != AUTO_DETECT_LABEL else f"{script_device} (auto-detected)"
             msg = (
-                f"Ready to flash {current_model} device.\n\n"
+                f"Ready to flash {display_model} device.\n\n"
                 f"Firmware folder: {self.rom_path}\n"
                 f"Script: {script_display}\n"
                 f"Variant: {selected_variant}\n\n"
@@ -1116,15 +1181,19 @@ class MainWindow(ctk.CTk):
                 has_region=has_region,
             )
         else:
-            config = self.SCRIPT_PROFILES[current_model]
-            selected_variant = self.selected_script_variants[current_model]
-            script_name = config["script"]
-            script_args = [config["variant_arg"], selected_variant] + config["default_args"]
-            self.flash_steps = build_script_device_steps(
-                current_model,
-                script_name,
-                script_args,
-            )
+            script_device = self._resolve_script_device()
+            if script_device:
+                config = self.SCRIPT_PROFILES[script_device]
+                selected_variant = self.selected_script_variants.get(script_device, config["default_variant"])
+                script_name = config["script"]
+                script_args = [config["variant_arg"], selected_variant] + config["default_args"]
+                self.flash_steps = build_script_device_steps(
+                    script_device,
+                    script_name,
+                    script_args,
+                )
+            else:
+                self.flash_steps = []
         self._rebuild_step_widgets()
 
     def _lock_controls(self):
@@ -1152,7 +1221,7 @@ class MainWindow(ctk.CTk):
         self.browse_btn.configure(state="normal")
         self.region_combo.configure(state="readonly")
         current_model = self.current_model.get()
-        if current_model in self.SCRIPT_PROFILES:
+        if self._resolve_script_device():
             self.suw_checkbox.configure(state="disabled")
         else:
             self.suw_checkbox.configure(state="normal")
