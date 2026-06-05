@@ -6,13 +6,16 @@ set -Eeuo pipefail
 # ==============================================================================
 #  Supports SKU variants: MC5, PDC5, PEC5, PHC5, PKC5, TAC5, TDC5, TEC5
 #
+#  Auto-detects ROM type:
+#    Official — full ROM with boot.img, vendor.img, bootloader firmware
+#    Jenkins  — partial ROM (system/system_ext/product + init_boot/pvmfw only)
+#
 #  Bootloader images (xbl, tz, abl, etc.) always come from MC5/.
 #  Modem/BT files come from the selected SKU folder if present, else MC5/.
-#  product-*.img and vbmeta_system-*.img come from SKU folder if present,
-#  else fall back to MC5 variants.
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "${FLASH_FIRMWARE_DIR:-$(dirname "${BASH_SOURCE[0]}")}" && pwd)"
+SCRIPT_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL="MC5"
 SERIAL=""
 DRY_RUN=0
@@ -24,6 +27,11 @@ YES=0
 TARGET_SLOT="a"
 FASTBOOT_CHUNK_SIZE="32M"
 
+# ROM type detection
+# Official: full firmware with boot.img, bootloader, etc.
+# Jenkins: partial ROM (system/system_ext/product + pvmfw only)
+ROM_TYPE=""  # "official" | "jenkins" | "" (auto-detect from boot.img)
+
 VALID_MODELS=(MC5 PDC5 PEC5 PHC5 PKC5 TAC5 TDC5 TEC5)
 BASE_MODEL="MC5"   # Always the source of bootloader binaries
 
@@ -32,6 +40,10 @@ usage() {
 Usage:
   ./flash_e10.sh [options]
 
+  Auto-detects ROM type:
+    Official  — full ROM package with boot.img, vendor.img, bootloader firmware
+    Jenkins   — partial ROM (system/system_ext/product + init_boot/pvmfw only)
+
 Options:
   -m, --model MODEL       SKU to flash: MC5 PDC5 PEC5 PHC5 PKC5 TAC5 TDC5 TEC5
                           Default: MC5
@@ -39,6 +51,7 @@ Options:
       --wipe              Erase userdata (userdata-*.img if present, else erase)
       --disable-verity    Flash vbmeta_verification_disabled.img (default)
       --enable-verity     Flash vbmeta.img instead
+      --rom-type TYPE     Override auto-detect: official | jenkins
       --dry-run           Print commands without executing
       --no-reboot         Leave device in fastboot after flashing
       --target-slot SLOT  Slot to flash and activate: a or b. Default: a
@@ -65,8 +78,7 @@ fastboot_cmd() {
                      || fastboot -S "$FASTBOOT_CHUNK_SIZE" "$@"
 }
 
-# Flash without -S re-chunking — required for Qualcomm sparse blobs (NON-HLOS.bin, BTFM.bin, dspso.bin)
-# that contain don't-care chunks not aligned to 4096, which break fastboot's sparse splitter.
+# Flash without -S re-chunking — required for Qualcomm sparse blobs
 fastboot_cmd_raw() {
   [[ -n "$SERIAL" ]] && fastboot -s "$SERIAL" "$@" || fastboot "$@"
 }
@@ -211,86 +223,234 @@ enter_fastbootd() {
   wait_for_fastbootd || die "Could not enter fastbootd."
 }
 
-# ── Flash phases ───────────────────────────────────────────────────────────────
+# ── ROM type detection ───────────────────────────────────────────────────────
 
-# Phase 1 (bootloader mode): flash images needed to boot into fastbootd.
-# vbmeta_verification_disabled is used here so AVB doesn't block the reboot.
-flash_fastbootd_bootstrap_partitions() {
+detect_rom_type() {
+  [[ -n "$ROM_TYPE" ]] && return 0
+  if [[ -f "$SCRIPT_DIR/boot.img" ]]; then
+    ROM_TYPE="official"
+  else
+    ROM_TYPE="jenkins"
+  fi
+}
+
+# Find bundled vbmeta_verification_disabled.img for Jenkins mode.
+find_bundled_vbmeta() {
+  local deb_dir="/usr/share/FlashTool/assets/e10"
+  for dir in "$deb_dir" "$SCRIPT_ABS"; do
+    for name in vbmeta_verification_disabled.img vbmeta.img; do
+      [[ -f "$dir/$name" ]] && echo "$dir/$name" && return 0
+    done
+  done
+  echo ""
+}
+
+# ── Official ROM flash flow ────────────────────────────────────────────────────
+
+flash_official_bootstrap() {
   local vbmeta="$1"
-  local bootstrap_vbmeta
-  bootstrap_vbmeta="$(first_existing \
-    "$SCRIPT_DIR/vbmeta_verification_disabled.img" \
-    "/usr/share/FlashTool/assets/e10/vbmeta_verification_disabled.img")"
-
-  log "Flash boot images needed for fastbootd bootstrap"
+  log "Flash boot images needed for fastbootd"
   flash_slot_if_exists boot        "$SCRIPT_DIR/boot.img"
   flash_slot_if_exists init_boot   "$SCRIPT_DIR/init_boot.img"
   flash_slot_if_exists vendor_boot "$SCRIPT_DIR/vendor_boot.img"
   flash_slot_if_exists recovery    "$SCRIPT_DIR/recovery.img"
   flash_slot_if_exists dtbo        "$SCRIPT_DIR/dtbo.img"
-  flash_slot_if_exists pvmfw       "$SCRIPT_DIR/pvmfw.img"
+  flash_slot_if_exists vbmeta      "$vbmeta"
+}
 
-  if [[ -n "$bootstrap_vbmeta" ]]; then
-    flash_slot_if_exists vbmeta "$bootstrap_vbmeta"
+flash_official_bootloader() {
+  local model_dir="$1" model_lower="$2" vbmeta="$3"
+  local base_dir="$SCRIPT_DIR/$BASE_MODEL"
+
+  log "Flash bootloader and boot-slot partitions"
+  flash_slot_if_exists xbl          "$base_dir/xbl_s.melf"
+  flash_slot_if_exists xbl_config   "$base_dir/xbl_config.elf"
+  flash_slot_if_exists multiimgqti  "$base_dir/multi_image_qti.mbn"
+  flash_slot_if_exists multiimgoem  "$base_dir/multi_image.mbn"
+  flash_slot_if_exists uefi         "$base_dir/uefi.elf"
+  flash_slot_if_exists aop          "$base_dir/aop.mbn"
+  flash_slot_if_exists aop_config   "$base_dir/aop_devcfg.mbn"
+  flash_slot_if_exists tz           "$base_dir/tz.mbn"
+  flash_slot_if_exists hyp          "$base_dir/hypvm.mbn"
+  flash_slot_raw       modem        "$base_dir/NON-HLOS.bin"
+  flash_slot_raw       bluetooth    "$base_dir/BTFM.bin"
+  flash_slot_raw       dsp          "$base_dir/dspso.bin"
+  flash_slot_if_exists abl          "$base_dir/abl.elf"
+  flash_slot_if_exists keymaster    "$base_dir/keymint.mbn"
+  flash_slot_if_exists devcfg       "$base_dir/devcfg.mbn"
+  flash_slot_if_exists qupfw        "$base_dir/qupv3fw.elf"
+  flash_slot_if_exists uefisecapp   "$base_dir/uefi_sec.mbn"
+  flash_slot_if_exists imagefv      "$base_dir/imagefv.elf"
+  flash_slot_if_exists shrm         "$base_dir/shrm.elf"
+  flash_slot_if_exists cpucp        "$base_dir/cpucp.elf"
+  flash_slot_if_exists cpucp_dtb    "$base_dir/cpucp_dtbs.elf"
+  flash_slot_if_exists featenabler  "$base_dir/featenabler.mbn"
+  flash_slot_if_exists xbl_ramdump  "$base_dir/XblRamdump.elf"
+  flash_slot_if_exists pvmfw        "$SCRIPT_DIR/pvmfw.img"
+  flash_slot_if_exists boot         "$SCRIPT_DIR/boot.img"
+  flash_slot_if_exists init_boot    "$SCRIPT_DIR/init_boot.img"
+  flash_slot_if_exists vendor_boot  "$SCRIPT_DIR/vendor_boot.img"
+  flash_slot_if_exists recovery     "$SCRIPT_DIR/recovery.img"
+  flash_slot_if_exists dtbo         "$SCRIPT_DIR/dtbo.img"
+  flash_slot_if_exists vbmeta       "$vbmeta"
+  flash_slot_if_exists vbmeta_system "$model_dir/vbmeta_system-$model_lower.img"
+  flash_slot_if_exists version      "$SCRIPT_DIR/version.img"
+  flash_slot_if_exists sdl          "$base_dir/shprloader.img"
+  flash_slot_if_exists ssfd         "$base_dir/ssfd.img"
+
+  log "Flash physical non-slot partitions"
+  flash_if_exists persist    "$SCRIPT_DIR/persist.img"
+  flash_if_exists metadata   "$SCRIPT_DIR/metadata.img"
+  flash_if_exists durable    "$SCRIPT_DIR/durable.img"
+  flash_if_exists tombstones "$SCRIPT_DIR/tombstones.img"
+  flash_if_exists kitting    "$base_dir/kitting.img"
+}
+
+main_official() {
+  local model_dir="$SCRIPT_DIR/$MODEL"
+  local model_lower="${MODEL,,}"
+
+  [[ -d "$model_dir" ]] || die "Missing model folder: $model_dir"
+  require_file "$SCRIPT_DIR/boot.img"
+  require_file "$SCRIPT_DIR/dtbo.img"
+  require_file "$SCRIPT_DIR/init_boot.img"
+  require_file "$SCRIPT_DIR/vendor_boot.img"
+  require_file "$SCRIPT_DIR/system.img"
+  require_file "$SCRIPT_DIR/system_ext-lyle.img"
+  require_file "$SCRIPT_DIR/vendor.img"
+  require_file "$model_dir/product-$model_lower.img"
+  require_file "$model_dir/vbmeta_system-$model_lower.img"
+
+  local vbmeta="$SCRIPT_DIR/vbmeta.img"
+  (( DISABLE_VERITY )) && vbmeta="$SCRIPT_DIR/vbmeta_verification_disabled.img"
+  require_file "$vbmeta"
+
+  confirm_flash
+  enter_bootloader
+  flash_official_bootstrap "$vbmeta"
+
+  log "Set active slot $TARGET_SLOT before fastbootd"
+  run_fastboot --set-active="$TARGET_SLOT"
+
+  enter_fastbootd
+
+  log "Prepare super partition"
+  [[ -f "$SCRIPT_DIR/super_empty.img" ]] && run_fastboot wipe-super "$SCRIPT_DIR/super_empty.img"
+
+  log "Flash dynamic partitions"
+  flash_if_exists system      "$SCRIPT_DIR/system.img"
+  flash_if_exists system_ext  "$SCRIPT_DIR/system_ext-lyle.img"
+  flash_if_exists vendor      "$SCRIPT_DIR/vendor.img"
+  flash_if_exists product     "$model_dir/product-$model_lower.img"
+  flash_if_exists odm         "$SCRIPT_DIR/odm.img"
+  flash_if_exists system_dlkm "$SCRIPT_DIR/system_dlkm.img"
+  flash_if_exists vendor_dlkm "$SCRIPT_DIR/vendor_dlkm.img"
+  flash_if_exists odm_dlkm    "$SCRIPT_DIR/odm_dlkm.img"
+
+  if (( WIPE )); then
+    log "Wipe userdata"
+    local userdata
+    userdata="$(first_existing \
+      "$model_dir/userdata-$model_lower.img" \
+      "$base_dir/userdata-mc5.img")"
+    if [[ -n "$userdata" ]]; then
+      run_fastboot flash userdata "$userdata"
+    else
+      run_fastboot erase userdata
+      run_fastboot erase metadata 2>/dev/null || true
+    fi
   else
-    flash_slot_if_exists vbmeta "$vbmeta"
+    log "Skipping userdata — pass --wipe to erase"
+  fi
+
+  log "Reboot to bootloader for final firmware partitions"
+  run_fastboot reboot bootloader
+  wait_for_fastboot_device || die "Device did not return to bootloader."
+  flash_official_bootloader "$model_dir" "$model_lower" "$vbmeta"
+
+  log "Set active slot $TARGET_SLOT"
+  run_fastboot --set-active="$TARGET_SLOT"
+
+  if (( REBOOT_AFTER )); then
+    log "Reboot device"
+    run_fastboot reboot
+  else
+    log "Done. Device left in fastboot"
   fi
 }
 
-# Phase 3 (bootloader mode): flash bootloader + all physical/slot partitions.
-# Bootloader binaries always come from MC5 (base SKU).
-# Modem/BT/product/vbmeta_system prefer the selected SKU folder, fall back to MC5.
-flash_bootloader_and_physical_partitions() {
-  local model_dir="$1"
-  local model_lower="$2"
-  local vbmeta="$3"
-  local base_dir="$SCRIPT_DIR/$BASE_MODEL"
+# ── Jenkins ROM flash flow ─────────────────────────────────────────────────────
 
-  log "Flash bootloader partitions (source: $BASE_MODEL)"
-  flash_slot_if_exists xbl         "$base_dir/xbl_s.melf"
-  flash_slot_if_exists xbl_config  "$base_dir/xbl_config.elf"
-  flash_slot_if_exists multiimgqti "$base_dir/multi_image_qti.mbn"
-  flash_slot_if_exists multiimgoem "$base_dir/multi_image.mbn"
-  flash_slot_if_exists uefi        "$base_dir/uefi.elf"
-  flash_slot_if_exists aop         "$base_dir/aop.mbn"
-  flash_slot_if_exists aop_config  "$base_dir/aop_devcfg.mbn"
-  flash_slot_if_exists tz          "$base_dir/tz.mbn"
-  flash_slot_if_exists hyp         "$base_dir/hypvm.mbn"
-  flash_slot_if_exists abl         "$base_dir/abl.elf"
-  flash_slot_if_exists keymaster   "$base_dir/keymint.mbn"
-  flash_slot_if_exists devcfg      "$base_dir/devcfg.mbn"
-  flash_slot_if_exists qupfw       "$base_dir/qupv3fw.elf"
-  flash_slot_if_exists uefisecapp  "$base_dir/uefi_sec.mbn"
-  flash_slot_if_exists imagefv     "$base_dir/imagefv.elf"
-  flash_slot_if_exists shrm        "$base_dir/shrm.elf"
-  flash_slot_if_exists cpucp       "$base_dir/cpucp.elf"
-  flash_slot_if_exists cpucp_dtb   "$base_dir/cpucp_dtbs.elf"
-  flash_slot_if_exists featenabler "$base_dir/featenabler.mbn"
-  flash_slot_if_exists xbl_ramdump "$base_dir/XblRamdump.elf"
-  flash_slot_if_exists pvmfw       "$SCRIPT_DIR/pvmfw.img"
-  flash_slot_if_exists init_boot   "$SCRIPT_DIR/init_boot.img"
+main_jenkins() {
+  local model_dir="$SCRIPT_DIR/$MODEL"
+  local model_lower="${MODEL,,}"
 
-  log "Flash modem/BT (prefer SKU dir, fall back to $BASE_MODEL)"
-  local modem bt dsp
-  modem="$(first_existing "$model_dir/NON-HLOS.bin"  "$base_dir/NON-HLOS.bin")"
-  bt="$(   first_existing "$model_dir/BTFM.bin"      "$base_dir/BTFM.bin")"
-  dsp="$(  first_existing "$model_dir/dspso.bin"     "$base_dir/dspso.bin")"
-  flash_slot_raw modem     "$modem"
-  flash_slot_raw bluetooth "$bt"
-  flash_slot_raw dsp       "$dsp"
+  local vbmeta; vbmeta="$(find_bundled_vbmeta)"
+  if [[ -z "$vbmeta" ]]; then
+    echo "WARNING: vbmeta_verification_disabled.img not found — skipping vbmeta flash" >&2
+    echo "WARNING: device may fail to boot due to AVB chain verification failure" >&2
+  fi
 
-  log "Flash vbmeta + vbmeta_system (prefer SKU dir, fall back to $BASE_MODEL)"
-  local vbmeta_system
-  vbmeta_system="$(first_existing \
-    "$model_dir/vbmeta_system-$model_lower.img" \
-    "$base_dir/vbmeta_system-mc5.img")"
-  flash_slot_if_exists vbmeta        "$vbmeta"
-  flash_slot_if_exists vbmeta_system "$vbmeta_system"
+  [[ -d "$model_dir" ]] || die "Missing model folder: $model_dir"
+  require_file "$SCRIPT_DIR/init_boot.img"
+  require_file "$SCRIPT_DIR/pvmfw.img"
+  require_file "$SCRIPT_DIR/system.img"
+  require_file "$SCRIPT_DIR/system_ext-lyle.img"
+  require_file "$model_dir/product-$model_lower.img"
+  require_file "$model_dir/vbmeta_system-$model_lower.img"
 
-  log "Flash non-slot physical partitions"
-  flash_slot_if_exists sdl     "$base_dir/shprloader.img"
-  flash_slot_if_exists ssfd    "$base_dir/ssfd.img"
-  flash_if_exists      kitting "$base_dir/kitting.img"
+  confirm_flash
+  enter_bootloader
+
+  log "Flash boot images needed for fastbootd"
+  if [[ -n "$vbmeta" ]]; then
+    run_fastboot flash --disable-verity --disable-verification "vbmeta_a" "$vbmeta"
+    run_fastboot flash --disable-verity --disable-verification "vbmeta_b" "$vbmeta"
+  fi
+  flash_slot_if_exists init_boot "$SCRIPT_DIR/init_boot.img"
+  flash_slot_if_exists pvmfw     "$SCRIPT_DIR/pvmfw.img"
+
+  log "Set active slot $TARGET_SLOT before fastbootd"
+  run_fastboot --set-active="$TARGET_SLOT"
+
+  enter_fastbootd
+
+  log "Prepare super partition"
+  log "Flash dynamic partitions"
+  if (( ! DRY_RUN )); then
+    for part in system_b system_ext_b product_b; do
+      fastboot_cmd delete-logical-partition "$part" 2>/dev/null || true
+    done
+  fi
+  flash_if_exists system     "$SCRIPT_DIR/system.img"
+  flash_if_exists system_ext "$SCRIPT_DIR/system_ext-lyle.img"
+  flash_if_exists vendor     "$SCRIPT_DIR/vendor.img"
+  flash_if_exists product    "$model_dir/product-$model_lower.img"
+
+  if (( WIPE )); then
+    log "Wipe userdata"
+    run_fastboot erase userdata
+    (( DRY_RUN )) || fastboot_cmd erase metadata 2>/dev/null || true
+  else
+    log "Skipping userdata — pass --wipe to erase"
+  fi
+
+  log "Reboot to bootloader for firmware partitions"
+  run_fastboot reboot bootloader
+  wait_for_fastboot_device || die "Device did not return to bootloader."
+
+  log "Flash bootloader and boot-slot partitions"
+  flash_slot_if_exists vbmeta_system "$model_dir/vbmeta_system-$model_lower.img"
+
+  log "Set active slot $TARGET_SLOT"
+  run_fastboot --set-active="$TARGET_SLOT"
+
+  if (( REBOOT_AFTER )); then
+    log "Reboot device"
+    run_fastboot reboot
+  else
+    log "Done. Device left in fastboot"
+  fi
 }
 
 # ── Argument parsing ───────────────────────────────────────────────────────────
@@ -305,6 +465,11 @@ parse_args() {
       --wipe)            WIPE=1;         shift ;;
       --disable-verity)  DISABLE_VERITY=1; shift ;;
       --enable-verity)   DISABLE_VERITY=0; shift ;;
+      --rom-type)
+        ROM_TYPE="${2:-}"
+        [[ "$ROM_TYPE" == "official" || "$ROM_TYPE" == "jenkins" ]] \
+          || die "--rom-type must be 'official' or 'jenkins'"
+        shift 2 ;;
       --dry-run)         DRY_RUN=1;     shift ;;
       --no-reboot)       REBOOT_AFTER=0; shift ;;
       --target-slot)
@@ -327,6 +492,7 @@ confirm_flash() {
   (( YES ))     && return 0
   echo "Model     : $MODEL"
   echo "Slot      : $TARGET_SLOT"
+  echo "ROM type  : $ROM_TYPE"
   echo "Package   : $SCRIPT_DIR"
   (( WIPE )) && echo "WIPE      : enabled — user data will be ERASED"
   read -r -p "Type FLASH to continue: " answer
@@ -346,7 +512,6 @@ main() {
   (( valid )) || die "Unknown model: $MODEL. Valid: ${VALID_MODELS[*]}"
 
   local model_dir="$SCRIPT_DIR/$MODEL"
-  local model_lower="${MODEL,,}"
   local base_dir="$SCRIPT_DIR/$BASE_MODEL"
 
   require_tool adb
@@ -358,85 +523,13 @@ main() {
   # SKU dir must exist (may be empty for variants sharing MC5 bootloader)
   [[ -d "$model_dir" ]] || die "Missing model folder: $model_dir"
 
-  # Required common images
-  require_file "$SCRIPT_DIR/init_boot.img"
-  require_file "$SCRIPT_DIR/pvmfw.img"
-  require_file "$SCRIPT_DIR/system.img"
-  require_file "$SCRIPT_DIR/system_ext-lyle.img"
+  detect_rom_type
+  echo "==> ROM type: $ROM_TYPE (SCRIPT_DIR=$SCRIPT_DIR)"
 
-  # Determine vbmeta image
-  local vbmeta
-  if (( DISABLE_VERITY )); then
-    vbmeta="$(first_existing \
-      "$SCRIPT_DIR/vbmeta_verification_disabled.img" \
-      "/usr/share/FlashTool/assets/e10/vbmeta_verification_disabled.img")"
-    [[ -n "$vbmeta" ]] || {
-      echo "WARNING: vbmeta_verification_disabled.img not found — falling back to vbmeta.img"
-      vbmeta="$(first_existing "$SCRIPT_DIR/vbmeta.img")"
-    }
+  if [[ "$ROM_TYPE" == "jenkins" ]]; then
+    main_jenkins
   else
-    vbmeta="$SCRIPT_DIR/vbmeta.img"
-  fi
-  # vbmeta is optional — device may already have verification disabled
-  [[ -z "$vbmeta" ]] && echo "WARNING: no vbmeta image found — skipping vbmeta flash"
-
-  confirm_flash
-  enter_bootloader
-
-  # ── Phase 1: Flash bootstrap partitions (bootloader mode) ──
-  flash_fastbootd_bootstrap_partitions "${vbmeta:-}"
-  log "Set active slot $TARGET_SLOT before fastbootd"
-  run_fastboot --set-active="$TARGET_SLOT"
-
-  # ── Phase 2: Flash dynamic partitions (fastbootd mode) ──
-  enter_fastbootd
-
-  log "Prepare super partition"
-  [[ -f "$SCRIPT_DIR/super_empty.img" ]] && run_fastboot wipe-super "$SCRIPT_DIR/super_empty.img"
-
-  log "Flash dynamic partitions"
-  flash_if_exists system      "$SCRIPT_DIR/system.img"
-  flash_if_exists system_ext  "$SCRIPT_DIR/system_ext-lyle.img"
-  flash_if_exists vendor      "$SCRIPT_DIR/vendor.img"
-
-  # product: prefer SKU-specific, fall back to MC5
-  local product
-  product="$(first_existing \
-    "$model_dir/product-$model_lower.img" \
-    "$base_dir/product-mc5.img")"
-  flash_if_exists product "$product"
-
-  # Wipe or skip userdata
-  if (( WIPE )); then
-    log "Wipe userdata"
-    local userdata
-    userdata="$(first_existing \
-      "$model_dir/userdata-$model_lower.img" \
-      "$base_dir/userdata-mc5.img")"
-    if [[ -n "$userdata" ]]; then
-      run_fastboot flash userdata "$userdata"
-    else
-      run_fastboot erase userdata
-      run_fastboot erase metadata 2>/dev/null || true
-    fi
-  else
-    log "Skipping userdata — pass --wipe to erase"
-  fi
-
-  # ── Phase 3: Flash bootloader + physical partitions (bootloader mode) ──
-  log "Reboot to bootloader for firmware partitions"
-  run_fastboot reboot bootloader
-  wait_for_fastboot_device || die "Device did not return to bootloader."
-  flash_bootloader_and_physical_partitions "$model_dir" "$model_lower" "${vbmeta:-}"
-
-  log "Set active slot $TARGET_SLOT"
-  run_fastboot --set-active="$TARGET_SLOT"
-
-  if (( REBOOT_AFTER )); then
-    log "Reboot device"
-    run_fastboot reboot
-  else
-    log "Done. Device left in fastboot."
+    main_official
   fi
 }
 
