@@ -223,8 +223,12 @@ flash_fastbootd_bootstrap_partitions() {
     "/usr/share/FlashTool/assets/e10/vbmeta_verification_disabled.img")"
 
   log "Flash boot images needed for fastbootd bootstrap"
-  flash_slot_if_exists init_boot "$SCRIPT_DIR/init_boot.img"
-  flash_slot_if_exists pvmfw     "$SCRIPT_DIR/pvmfw.img"
+  flash_slot_if_exists boot        "$SCRIPT_DIR/boot.img"
+  flash_slot_if_exists init_boot   "$SCRIPT_DIR/init_boot.img"
+  flash_slot_if_exists vendor_boot "$SCRIPT_DIR/vendor_boot.img"
+  flash_slot_if_exists recovery    "$SCRIPT_DIR/recovery.img"
+  flash_slot_if_exists dtbo        "$SCRIPT_DIR/dtbo.img"
+  flash_slot_if_exists pvmfw       "$SCRIPT_DIR/pvmfw.img"
 
   if [[ -n "$bootstrap_vbmeta" ]]; then
     flash_slot_if_exists vbmeta "$bootstrap_vbmeta"
