@@ -397,6 +397,7 @@ main() {
   log "Flash dynamic partitions"
   flash_if_exists system      "$SCRIPT_DIR/system.img"
   flash_if_exists system_ext  "$SCRIPT_DIR/system_ext-lyle.img"
+  flash_if_exists vendor      "$SCRIPT_DIR/vendor.img"
 
   # product: prefer SKU-specific, fall back to MC5
   local product
