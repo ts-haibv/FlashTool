@@ -71,4 +71,4 @@ FlashTool is a cross-platform desktop application for flashing ROM images onto A
 
 ## Version
 
-Current release: **v1.1.6**
+Current release: **v1.2.0**

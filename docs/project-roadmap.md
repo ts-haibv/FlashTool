@@ -1,6 +1,6 @@
 # FlashTool — Project Roadmap
 
-## Current State (v1.1.6)
+## Current State (v1.2.0)
 
 | Area | Status |
 |------|--------|

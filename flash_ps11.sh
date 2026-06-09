@@ -794,14 +794,71 @@ flash_official_bootstrap() {
         flash_partition "vbmeta_${SLOT}" "vbmeta.img"
     fi
 
-    log_step "Setting active slot to ${BOLD}${SLOT}${NC}"
-    fb_exec --set-active="${SLOT}"
-
     log_success "Phase 1 complete: Bootstrap partitions flashed"
 }
 
+flash_non_slot_partitions() {
+    log_phase "2 — NON-SLOT PARTITIONS (fastboot mode)"
+
+    STEP=0
+    TOTAL_STEPS=10
+
+    log_info "Flashing non-slot partitions (LUN0)..."
+    flash_partition "persist"         "persist.img"
+    flash_partition "metadata"        "metadata.img"
+    flash_partition "tombstones"      "tombstones.img"
+    flash_partition "tombstones_sys"  "tombstones_sys.img"
+    flash_partition "durable"         "durable.img"
+    flash_partition "durable_sys"     "durable_sys.img"
+
+    # erase misc to clear any stale boot commands
+    log_step "Erasing misc (clear boot commands)"
+    fb_exec erase misc
+
+    # ── SKU partition (fixed partition, must be flashed in fastboot mode) ──
+    local sku_path="${KIRA_DIR}/${VARIANT^}/sku.img"
+    if [[ "${VARIANT}" == "kira" ]]; then
+        sku_path="${KIRA_DIR}/Kira/sku.img"
+    fi
+    if [[ -f "${sku_path}" ]]; then
+        local saved_errors_sku=${ERRORS}
+        log_step "Flashing ${BOLD}sku${NC} ← ${sku_path##*/} (fastboot mode)"
+        if ! fb_exec flash sku "${sku_path}"; then
+            log_warn "sku flash failed — skipping (optional)"
+            ERRORS=${saved_errors_sku}
+            SKIPPED=$((SKIPPED + 1))
+        else
+            log_success "sku OK"
+        fi
+    fi
+
+    # ── Kitting partition (fixed partition, must be flashed in fastboot mode) ──
+    local kitting_path="${KIRA_DIR}/${VARIANT^}/kitting.img"
+    case "${VARIANT}" in
+        kira) kitting_path="${KIRA_DIR}/Kira/kitting.img" ;;
+        mn4)  kitting_path="${KIRA_DIR}/MN4/kitting.img" ;;
+        pdn4) kitting_path="${KIRA_DIR}/PDN4/kitting.img" ;;
+        pen4) kitting_path="${KIRA_DIR}/PEN4/kitting.img" ;;
+    esac
+    if [[ -f "${kitting_path}" ]]; then
+        local saved_errors_kit=${ERRORS}
+        log_step "Flashing ${BOLD}kitting${NC} ← ${kitting_path##*/} (fastboot mode)"
+        if ! fb_exec flash kitting "${kitting_path}"; then
+            log_warn "kitting flash failed — skipping (optional)"
+            ERRORS=${saved_errors_kit}
+            SKIPPED=$((SKIPPED + 1))
+        else
+            log_success "kitting OK"
+        fi
+    else
+        log_info "No kitting image for variant ${VARIANT^^} — skipping"
+    fi
+
+    log_success "Phase 2 complete: Non-slot partitions flashed"
+}
+
 flash_official_firmware() {
-    log_phase "3 — FIRMWARE & FINALIZE (bootloader mode)"
+    log_phase "3 — FIRMWARE PARTITIONS (bootloader mode)"
 
     STEP=0
     TOTAL_STEPS=40
@@ -855,97 +912,21 @@ flash_official_firmware() {
     flash_partition "spu_service_${SLOT}"   "spu_service.mbn"   optional
     flash_partition "storsec"               "storsec.mbn"       optional
 
-    # ── Non-slot partitions ──
-    log_info "Flashing non-slot partitions (LUN0)..."
-    flash_partition "persist"         "persist.img"
-    flash_partition "metadata"        "metadata.img"
-    flash_partition "tombstones"      "tombstones.img"
-    flash_partition "tombstones_sys"  "tombstones_sys.img"
-    flash_partition "durable"         "durable.img"
-    flash_partition "durable_sys"     "durable_sys.img"
-
-    # erase misc to clear any stale boot commands
-    log_step "Erasing misc"
-    fb_exec erase misc
-
-    # ── SKU partition (fixed partition, must be flashed in fastboot mode) ──
-    local sku_path="${KIRA_DIR}/${VARIANT^}/sku.img"
-    if [[ "${VARIANT}" == "kira" ]]; then
-        sku_path="${KIRA_DIR}/Kira/sku.img"
-    fi
-    if [[ -f "${sku_path}" ]]; then
-        local saved_errors_sku=${ERRORS}
-        log_step "Flashing ${BOLD}sku${NC} ← ${sku_path##*/}"
-        if ! fb_exec flash sku "${sku_path}"; then
-            log_warn "sku flash failed — skipping (optional)"
-            ERRORS=${saved_errors_sku}
-            SKIPPED=$((SKIPPED + 1))
-        else
-            log_success "sku OK"
-        fi
-    fi
-
-    # ── Kitting partition ──
-    local kitting_path="${KIRA_DIR}/${VARIANT^}/kitting.img"
-    case "${VARIANT}" in
-        kira) kitting_path="${KIRA_DIR}/Kira/kitting.img" ;;
-        mn4)  kitting_path="${KIRA_DIR}/MN4/kitting.img" ;;
-        pdn4) kitting_path="${KIRA_DIR}/PDN4/kitting.img" ;;
-        pen4) kitting_path="${KIRA_DIR}/PEN4/kitting.img" ;;
-    esac
-    if [[ -f "${kitting_path}" ]]; then
-        local saved_errors_kit=${ERRORS}
-        log_step "Flashing ${BOLD}kitting${NC} ← ${kitting_path##*/}"
-        if ! fb_exec flash kitting "${kitting_path}"; then
-            log_warn "kitting flash failed — skipping (optional)"
-            ERRORS=${saved_errors_kit}
-            SKIPPED=$((SKIPPED + 1))
-        else
-            log_success "kitting OK"
-        fi
-    else
-        log_info "No kitting image for variant ${VARIANT^^} — skipping"
-    fi
-
     if [[ ${SKIPPED} -gt 0 ]]; then
         log_warn "${SKIPPED} partition(s) skipped (LUN1/secure — use QFIL for these)"
     fi
 
-    # Userdata
-    if [[ "${WIPE_USERDATA}" == true ]]; then
-        local userdata_img="userdata-${VARIANT}.img"
-        if [[ -f "${KIRA_DIR}/${userdata_img}" ]]; then
-            flash_partition "userdata" "${userdata_img}"
-        elif [[ -f "${KIRA_DIR}/userdata-kira.img" ]]; then
-            log_info "Variant generic userdata not found, using userdata-kira.img (Ext4 prebuilt)"
-            flash_partition "userdata" "userdata-kira.img"
-        else
-            log_step "Formatting userdata (mke2fs)"
-            fb_exec format:ext4 userdata
-        fi
-    else
-        log_info "Skipping userdata (use -w to wipe)"
-    fi
-
-    # Set active slot
-    log_step "Setting active slot to ${BOLD}${SLOT}${NC}"
-    fb_exec --set-active="${SLOT}"
-
-    # Reboot
-    log_step "Rebooting device..."
-    fb_exec reboot
-
-    log_success "Flash complete"
+    log_success "Phase 3 complete: Firmware partitions flashed"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Phase 2: Flash Dynamic Partitions (fastbootd mode)
+# Phase 4: Flash Dynamic Partitions (fastbootd mode)
 # ──────────────────────────────────────────────────────────────────────────────
 
 flash_dynamic_partitions() {
     enter_fastbootd
 
-    log_phase "2 — DYNAMIC PARTITIONS (fastbootd mode)"
+    log_phase "4 — DYNAMIC PARTITIONS (fastbootd mode)"
 
     STEP=0
     TOTAL_STEPS=11
@@ -989,9 +970,51 @@ flash_dynamic_partitions() {
     flash_partition "vbmeta_system_${SLOT}"  "${vbmeta_sys_img}"
 
     # SKU and kitting are flashed in Phase 2 (fastboot mode) — NOT here.
-    # fastbootd mode cannot see fixed partitions. Removed from Phase 3.
+    # fastbootd mode cannot see fixed partitions.
 
-    log_success "Phase 2 complete: Dynamic partitions flashed"
+    log_success "Phase 4 complete: Dynamic partitions flashed"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Phase 5: Userdata & Finalize
+# ──────────────────────────────────────────────────────────────────────────────
+
+flash_official_finalize() {
+    log_phase "5 — USERDATA & FINALIZE (bootloader mode)"
+
+    # Must be in bootloader mode for userdata flash and set-active
+    if device_in_fastbootd; then
+        log_info "Rebooting from fastbootd back to bootloader..."
+        fb_exec reboot bootloader
+        sleep 5
+        wait_for_device "fastboot" 60 || die "Device did not return to bootloader"
+    fi
+
+    STEP=0
+    TOTAL_STEPS=4
+
+    if [[ "${WIPE_USERDATA}" == true ]]; then
+        local userdata_img="userdata-${VARIANT}.img"
+        if [[ -f "${KIRA_DIR}/${userdata_img}" ]]; then
+            flash_partition "userdata" "${userdata_img}"
+        elif [[ -f "${KIRA_DIR}/userdata-kira.img" ]]; then
+            log_info "Variant generic userdata not found, using userdata-kira.img (Ext4 prebuilt)"
+            flash_partition "userdata" "userdata-kira.img"
+        else
+            log_step "Formatting userdata (mke2fs)"
+            fb_exec format:ext4 userdata
+        fi
+    else
+        log_info "Skipping userdata (use -w to wipe)"
+    fi
+
+    log_step "Setting active slot to ${BOLD}${SLOT}${NC}"
+    fb_exec --set-active="${SLOT}"
+
+    log_step "Rebooting device..."
+    fb_exec reboot
+
+    log_success "Phase 5 complete: Finalized"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1172,7 +1195,7 @@ main() {
     detect_rom_type
     echo -e "${DIM}  ROM type:  ${ROM_TYPE}${NC}"
     echo -e "${DIM}  Firmware:  $(basename "${SCRIPT_DIR}")${NC}"
-    echo -e "${DIM}  Script:    $(basename "$0") v1.0${NC}"
+    echo -e "${DIM}  Script:    $(basename "$0") v1.2.0${NC}"
     echo -e "${DIM}  Date:      $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 
     # Validate (uses ROM_TYPE to decide which images are required)
@@ -1206,16 +1229,18 @@ main() {
     # Execute phases based on mode
     if [[ "${BOOTLOADER_ONLY}" == true ]]; then
         flash_official_bootstrap
+        flash_non_slot_partitions
         flash_official_firmware
     elif [[ "${SYSTEM_ONLY}" == true ]]; then
-        flash_official_bootstrap
         flash_dynamic_partitions
-        flash_official_firmware
+        flash_official_finalize
     else
-        # Full flash: 1=bootstrap → 2=dynamic → 3=firmware+userdata+reboot
+        # Full flash: 1=bootstrap → 2=non-slot → 3=firmware → 4=dynamic → 5=finalize
         flash_official_bootstrap
-        flash_dynamic_partitions
+        flash_non_slot_partitions
         flash_official_firmware
+        flash_dynamic_partitions
+        flash_official_finalize
     fi
 
     # Summary
