@@ -106,8 +106,8 @@ class FlashWorker(threading.Thread):
             script_name = args[0]
             app_root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(__file__)))
             candidates = [
-                os.path.join(self.rom_path, script_name),
                 os.path.join(app_root, script_name),
+                os.path.join(self.rom_path, script_name),
             ]
             script_path = next((path for path in candidates if os.path.isfile(path)), script_name)
             return ["bash", script_path] + args[1:]

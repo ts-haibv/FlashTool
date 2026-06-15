@@ -1059,8 +1059,8 @@ class MainWindow(ctk.CTk):
             script_name = self.SCRIPT_PROFILES[script_device]["script"]
             app_root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
             script_candidates = [
-                os.path.join(self.rom_path, script_name),
                 os.path.join(app_root, script_name),
+                os.path.join(self.rom_path, script_name),
             ]
             if not any(os.path.isfile(path) for path in script_candidates):
                 messagebox.showerror("Error", f"Flash script not found: {script_name}")

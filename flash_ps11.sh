@@ -140,6 +140,28 @@ find_bundled_vbmeta() {
     echo ""
 }
 
+ps11_variant_dir_name() {
+    case "${1,,}" in
+        kira) echo "Kira" ;;
+        mn4)  echo "MN4" ;;
+        pdn4) echo "PDN4" ;;
+        pen4) echo "PEN4" ;;
+        *) return 1 ;;
+    esac
+}
+
+ps11_variant_root_dir() {
+    local dir_name
+    dir_name="$(ps11_variant_dir_name "$1")" || return 1
+    echo "${SCRIPT_DIR}/${dir_name}"
+}
+
+ps11_variant_kira_dir() {
+    local dir_name
+    dir_name="$(ps11_variant_dir_name "$1")" || return 1
+    echo "${KIRA_DIR}/${dir_name}"
+}
+
 # Like flash_partition but runs in bootloader mode (no preflight/wait_for_device overhead).
 # Used inside main_jenkins() bootloader phase.
 fb_flash_slot() {
@@ -640,16 +662,8 @@ validate_environment() {
     # Root-level: ${SCRIPT_DIR}/MN4/product-mn4.img
     # Kira-level: ${SCRIPT_DIR}/Kira/MN4/sku.img
     local root_variant_dir=""
-    case "${VARIANT}" in
-        kira) VARIANT_DIR="${SCRIPT_DIR}/Kira"
-              root_variant_dir="${SCRIPT_DIR}/Kira" ;;
-        mn4)  VARIANT_DIR="${SCRIPT_DIR}/MN4"
-              root_variant_dir="${SCRIPT_DIR}/MN4" ;;
-        pdn4) VARIANT_DIR="${SCRIPT_DIR}/PDN4"
-              root_variant_dir="${SCRIPT_DIR}/PDN4" ;;
-        pen4) VARIANT_DIR="${SCRIPT_DIR}/PEN4"
-              root_variant_dir="${SCRIPT_DIR}/PEN4" ;;
-    esac
+    VARIANT_DIR="$(ps11_variant_root_dir "${VARIANT}")"
+    root_variant_dir="${VARIANT_DIR}"
 
     # Validate slot
     case "${SLOT}" in
@@ -816,10 +830,8 @@ flash_non_slot_partitions() {
     fb_exec erase misc
 
     # ── SKU partition (fixed partition, must be flashed in fastboot mode) ──
-    local sku_path="${KIRA_DIR}/${VARIANT^}/sku.img"
-    if [[ "${VARIANT}" == "kira" ]]; then
-        sku_path="${KIRA_DIR}/Kira/sku.img"
-    fi
+    local sku_path
+    sku_path="$(ps11_variant_kira_dir "${VARIANT}")/sku.img"
     if [[ -f "${sku_path}" ]]; then
         local saved_errors_sku=${ERRORS}
         log_step "Flashing ${BOLD}sku${NC} ← ${sku_path##*/} (fastboot mode)"
@@ -833,13 +845,8 @@ flash_non_slot_partitions() {
     fi
 
     # ── Kitting partition (fixed partition, must be flashed in fastboot mode) ──
-    local kitting_path="${KIRA_DIR}/${VARIANT^}/kitting.img"
-    case "${VARIANT}" in
-        kira) kitting_path="${KIRA_DIR}/Kira/kitting.img" ;;
-        mn4)  kitting_path="${KIRA_DIR}/MN4/kitting.img" ;;
-        pdn4) kitting_path="${KIRA_DIR}/PDN4/kitting.img" ;;
-        pen4) kitting_path="${KIRA_DIR}/PEN4/kitting.img" ;;
-    esac
+    local kitting_path
+    kitting_path="$(ps11_variant_kira_dir "${VARIANT}")/kitting.img"
     if [[ -f "${kitting_path}" ]]; then
         local saved_errors_kit=${ERRORS}
         log_step "Flashing ${BOLD}kitting${NC} ← ${kitting_path##*/} (fastboot mode)"
