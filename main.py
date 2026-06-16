@@ -8,9 +8,13 @@ Usage:
 import sys
 import customtkinter as ctk
 from flash_tool.ui.main_window import MainWindow
+from flash_tool.updater import cleanup_old_updates
 
 
 def main():
+    # Run any update file cleanups
+    cleanup_old_updates()
+
     # Set appearance
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")

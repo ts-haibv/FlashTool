@@ -9,12 +9,14 @@ flowchart TB
         SW["StepWidget<br/>(step cards)"]
         LP["LogPanel<br/>(console output)"]
         TH["theme.py<br/>(colors, fonts, spacing)"]
+        UD["UpdateDialog<br/>(update panel)"]
     end
 
     subgraph Core["Core Layer"]
         FW["FlashWorker<br/>(threading.Thread)"]
         DM["device_manager.py<br/>(adb/fastboot state)"]
         CF["config.py<br/>(platform + ROM scanning)"]
+        UP["updater.py<br/>(self-update backend)"]
     end
 
     subgraph Profiles["Profile Layer"]
@@ -28,17 +30,22 @@ flowchart TB
         FB["fastboot binary"]
         SH["Bash scripts<br/>(flash_ps11.sh, etc.)"]
         ROM["ROM folder<br/>(*.img files)"]
+        GH["GitHub Releases API"]
     end
 
     MW -->|builds steps| G6 & OM & SD
     MW -->|spawns| FW
     MW -->|polls 2s| DM
+    MW -->|silently queries| UP
+    MW -->|opens| UD
+    UD -->|controls update| UP
     FW -->|executes| ADB & FB & SH
     FW -->|callbacks| MW
     DM -->|queries| ADB & FB
     CF -->|scans| ROM
     CF -->|paths| DM & FW
     G6 & OM & SD -->|FlashStep list| FW
+    UP -->|downloads updates| GH
 ```
 
 ## Data Flow

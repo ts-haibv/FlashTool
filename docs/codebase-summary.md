@@ -6,9 +6,11 @@
 |------|-------|---------|
 | `main.py` | 26 | Entry point; sets customtkinter theme and launches `MainWindow` |
 | `flash_tool/config.py` | 139 | Platform detection, binary path discovery, ROM folder scanning, app metadata |
+| `flash_tool/updater.py` | 232 | App self-update manager: queries GitHub API, chunk download stream, hot swap executables |
 | `flash_tool/device_manager.py` | 128 | ADB/Fastboot device detection, state polling, wait helpers, unlock check |
 | `flash_tool/flash_worker.py` | 419 | Background thread worker: step execution, sparse progress parsing, script phase tracking |
 | `flash_tool/ui/main_window.py` | 1399 | Main CTk window: header, sidebar, step list, log panel, footer, device polling |
+| `flash_tool/ui/update_dialog.py` | 557 | Modern CTk software update dialog with download progress bars and restart buttons |
 | `flash_tool/ui/step_widget.py` | 130 | Card widget per flash step (id, name, status, progress bar, elapsed time) |
 | `flash_tool/ui/log_panel.py` | 80 | Scrollable console output textbox with auto-scroll and clear |
 | `flash_tool/ui/theme.py` | 93 | Dark theme color palette, fonts, spacing constants, status config mapping |
@@ -36,6 +38,7 @@
 flash_tool/
 ├── __init__.py
 ├── config.py              # Platform utils, ROM scanning, app constants
+├── updater.py             # Github Release API consumer, self-update installer
 ├── device_manager.py      # ADB/Fastboot device state machine
 ├── flash_worker.py        # Background thread executor
 ├── profiles/              # Flash step generators per device
@@ -44,6 +47,7 @@ flash_tool/
 │   └── script_device.py
 └── ui/                    # CustomTkinter widgets
     ├── main_window.py
+    ├── update_dialog.py   # Software update dialog panel
     ├── step_widget.py
     ├── log_panel.py
     └── theme.py

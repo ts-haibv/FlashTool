@@ -23,6 +23,45 @@ from flash_tool.ui.theme import COLORS, FONTS, SPACING
 from flash_tool.ui.step_widget import StepWidget
 from flash_tool.ui.log_panel import LogPanel
 from flash_tool.ui import ask_yes_no
+from flash_tool.updater import check_for_updates
+from flash_tool.ui.update_dialog import UpdateDialog
+
+
+class CircularSpinner(ctk.CTkCanvas):
+    """Indeterminate circular loading spinner."""
+
+    def __init__(self, parent, size=16, color=COLORS["accent_blue"], bg=COLORS["bg_secondary"]):
+        super().__init__(parent, width=size, height=size, bg=bg, highlightthickness=0)
+        self.size = size
+        self.color = color
+        self.angle = 0
+        self.running = False
+
+    def start(self):
+        if not self.running:
+            self.running = True
+            self._animate()
+
+    def stop(self):
+        self.running = False
+        self.delete("all")
+
+    def _draw(self):
+        self.delete("all")
+        # Draw rotating arc segment
+        extent = 120
+        self.create_arc(
+            2, 2, self.size - 2, self.size - 2,
+            start=self.angle, extent=extent,
+            outline=self.color, width=2, style="arc"
+        )
+
+    def _animate(self):
+        if not self.running:
+            return
+        self.angle = (self.angle + 12) % 360
+        self._draw()
+        self.after(30, self._animate)
 
 
 class MainWindow(ctk.CTk):
@@ -128,6 +167,9 @@ class MainWindow(ctk.CTk):
         # Start device polling
         self._poll_device()
 
+        # Start background update check
+        self._init_update_check()
+
     # ════════════════════════════════════════════════════════════════════════
     # HEADER
     # ════════════════════════════════════════════════════════════════════════
@@ -153,6 +195,29 @@ class MainWindow(ctk.CTk):
             font=FONTS["caption"],
             text_color=COLORS["text_muted"],
         ).pack(side="left", padx=(SPACING["sm"], 0))
+
+        # Check Update button in header
+        self.update_btn = ctk.CTkButton(
+            title_frame,
+            text="Check Update",
+            font=FONTS["caption"],
+            width=95,
+            height=22,
+            fg_color=COLORS["bg_tertiary"],
+            hover_color=COLORS["bg_hover"],
+            text_color=COLORS["text_secondary"],
+            corner_radius=4,
+            command=self._on_update_btn_clicked,
+        )
+        self.update_btn.pack(side="left", padx=(SPACING["md"], 0))
+
+        # Circular loading spinner next to button (hidden by default)
+        self.update_spinner = CircularSpinner(
+            title_frame,
+            size=16,
+            color=COLORS["accent_blue"],
+            bg=COLORS["bg_secondary"],
+        )
 
         # Device status (right side)
         self.device_frame = ctk.CTkFrame(header, fg_color="transparent")
@@ -1486,6 +1551,77 @@ class MainWindow(ctk.CTk):
                 self._icon_ref = icon  # Keep reference to prevent GC
             except Exception:
                 pass  # Icon is optional, don't crash
+
+    def _init_update_check(self):
+        """Start a silent background check for software updates on launch."""
+        self.latest_update_info = None
+        self.update_check_done = False
+
+        def run_silent():
+            try:
+                # Wait 2 seconds to prioritize main app loading
+                import time
+                time.sleep(2)
+                info = check_for_updates(APP_VERSION)
+                self.update_check_done = True
+                if info and info.get("update_available"):
+                    self.latest_update_info = info
+                    self.after(0, self._notify_update_available)
+            except Exception:
+                pass
+
+        threading.Thread(target=run_silent, daemon=True).start()
+
+    def _notify_update_available(self):
+        """Change the header button to indicate an update is ready."""
+        if hasattr(self, "update_btn") and self.latest_update_info:
+            tag = self.latest_update_info.get("latest_version", "")
+            self.update_btn.configure(
+                text=f"Update: {tag}",
+                fg_color=COLORS["accent_green"],
+                hover_color="#3cb36b",
+                text_color="#101117",
+                font=FONTS["heading_sm"],
+            )
+            self.log_panel.append(
+                f"🔔 Software update available: {tag}! Click the green update button in the header to install."
+            )
+
+    def _on_update_btn_clicked(self):
+        """Handle manual update check click with visual loading spinner."""
+        # Disable button to prevent double clicks
+        self.update_btn.configure(state="disabled")
+
+        # Show and start loading spinner
+        self.update_spinner.pack(side="left", padx=(SPACING["sm"], 0))
+        self.update_spinner.start()
+
+        def run():
+            try:
+                info = check_for_updates(APP_VERSION)
+                self.after(0, self._on_manual_check_finished, info, None)
+            except Exception as e:
+                self.after(0, self._on_manual_check_finished, None, str(e))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _on_manual_check_finished(self, info: dict | None, error_msg: str | None = None):
+        """Clean up manual check spinner and display result dialog."""
+        # Stop and hide spinner
+        self.update_spinner.stop()
+        self.update_spinner.pack_forget()
+
+        # Re-enable update button
+        self.update_btn.configure(state="normal")
+
+        if info is not None:
+            if info.get("update_available"):
+                self.latest_update_info = info
+                self._notify_update_available()
+            UpdateDialog(self, APP_VERSION, info)
+        else:
+            err = error_msg or "Failed to query release updates. Please check your internet connection."
+            UpdateDialog(self, APP_VERSION, None, error_msg=err)
 
     def destroy(self):
         self._poll_running = False
