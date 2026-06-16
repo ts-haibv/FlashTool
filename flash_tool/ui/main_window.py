@@ -752,21 +752,42 @@ class MainWindow(ctk.CTk):
         if not zenity:
             return None
 
+        # Clean environment under PyInstaller to prevent Zenity from crashing
+        # due to library version mismatch (e.g. GLib/GTK)
+        env = os.environ.copy()
+        if getattr(sys, "frozen", False):
+            if "LD_LIBRARY_PATH_ORIG" in env:
+                env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
+            elif "LD_LIBRARY_PATH" in env:
+                del env["LD_LIBRARY_PATH"]
+
         initial_dir = self.rom_path or os.path.expanduser("~")
-        result = subprocess.run(
-            [
-                zenity,
-                "--file-selection",
-                "--directory",
-                "--title=Select ROM Folder",
-                f"--filename={os.path.join(initial_dir, '')}",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
+        try:
+            result = subprocess.run(
+                [
+                    zenity,
+                    "--file-selection",
+                    "--directory",
+                    "--title=Select ROM Folder",
+                    f"--filename={os.path.join(initial_dir, '')}",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+        except Exception:
+            return None
+
+        # Zenity return codes:
+        # 0 = OK (directory selected)
+        # 1 = Cancel/Close (user dismissed dialog)
+        # Anything else = Crash or error, fall back to filedialog
+        if result.returncode == 1:
             return ""
+        elif result.returncode != 0:
+            return None
+
         return result.stdout.strip()
         
     def _scan_rom_path(self, path: str):
