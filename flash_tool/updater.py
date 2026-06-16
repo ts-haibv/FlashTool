@@ -274,6 +274,17 @@ def restart_application():
         if "_MEIPASS" in env:
             del env["_MEIPASS"]
 
+        # Clean all PyInstaller environment variables starting with _PYI_
+        pyi_keys = [k for k in env.keys() if k.startswith("_PYI_")]
+        for k in pyi_keys:
+            del env[k]
+
+        # Clean Tcl/Tk variables pointing to the old extraction folder
+        if "TCL_LIBRARY" in env:
+            del env["TCL_LIBRARY"]
+        if "TK_LIBRARY" in env:
+            del env["TK_LIBRARY"]
+
     try:
         if sys.platform == "win32":
             subprocess.Popen([current_exe] + args, env=env)
@@ -282,27 +293,23 @@ def restart_application():
             # Sync filesystem buffer to ensure the new binary is fully written
             subprocess.run(["sync"], check=False)
 
-            # Unix double fork for robust process detachment and relaunch
-            pid = os.fork()
-            if pid == 0:
-                # First child: Create a new session to become session leader
-                os.setsid()
-                
-                # Second fork: Orphans the process so it is adopted by init
-                pid2 = os.fork()
-                if pid2 > 0:
-                    # Exit the first child immediately
-                    os._exit(0)
-                
-                # In second child (independent daemon): execute the new binary
-                try:
-                    os.execve(current_exe, [current_exe] + args, env)
-                except Exception:
-                    os._exit(1)
-            else:
-                # Parent process: Wait for first child (which exits immediately)
-                os.waitpid(pid, 0)
-                sys.exit(0)
+            # Relaunch using Popen with start_new_session=True to fully detach it
+            # Redirect stdout/stderr to a log file to avoid terminal locking & capture crashes
+            log_path = "/tmp/flashtool_relaunch.log"
+            try:
+                log_file = open(log_path, "w")
+            except Exception:
+                log_file = subprocess.DEVNULL
+
+            subprocess.Popen(
+                [current_exe] + args,
+                env=env,
+                start_new_session=True,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=log_file,
+            )
+            sys.exit(0)
     except Exception as e:
         print(f"Failed to restart application: {e}", file=sys.stderr)
         sys.exit(1)
