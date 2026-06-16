@@ -13,7 +13,7 @@
 #   ./flash_ps11.sh [OPTIONS]
 #
 # Options:
-#   -v, --variant VARIANT   Device variant: kira|mn4|pdn4|pen4 (default: kira)
+#   -v, --variant VARIANT   Device variant: kira|mn4|pdn4|pen4|phn4|tan4|ten4 (default: kira)
 #   -s, --slot SLOT         Target slot: a|b (default: a)
 #   -d, --disable-avb       Use vbmeta with verification disabled
 #   -w, --wipe              Wipe userdata (factory reset)
@@ -61,6 +61,7 @@ FASTBOOT="fastboot"
 USE_SUDO=false
 FLASH_TIMEOUT=120
 SKIPPED=0
+PRODUCT_VARIANT_DIR=""
 
 # ROM type detection
 # Official: full firmware with boot.img, bootloader, etc.
@@ -146,7 +147,18 @@ ps11_variant_dir_name() {
         mn4)  echo "MN4" ;;
         pdn4) echo "PDN4" ;;
         pen4) echo "PEN4" ;;
+        phn4) echo "PHN4" ;;
+        tan4) echo "TAN4" ;;
+        ten4) echo "TEN4" ;;
         *) return 1 ;;
+    esac
+}
+
+ps11_product_variant() {
+    case "${1,,}" in
+        phn4|tan4|ten4) echo "mn4" ;;
+        kira) echo "pdn4" ;;
+        *) echo "${1,,}" ;;
     esac
 }
 
@@ -193,10 +205,13 @@ fb_flash_slot() {
 
 device_in_fastboot() {
     if [[ "${DRY_RUN}" == true ]]; then return 1; fi
+    local -a fb_cmd=()
+    [[ "${USE_SUDO}" == true ]] && fb_cmd+=(sudo)
+    fb_cmd+=("${FASTBOOT}")
     if [[ -n "${DEVICE_SERIAL}" ]]; then
-        fastboot devices 2>/dev/null | awk '{print $1}' | grep -Fxq "${DEVICE_SERIAL}"
+        "${fb_cmd[@]}" devices 2>/dev/null | awk '{print $1}' | grep -Fxq "${DEVICE_SERIAL}"
     else
-        [[ -n "$(fastboot devices 2>/dev/null | awk 'NF {print $1; exit}')" ]]
+        [[ -n "$("${fb_cmd[@]}" devices 2>/dev/null | awk 'NF {print $1; exit}')" ]]
     fi
 }
 
@@ -245,6 +260,11 @@ enter_bootloader() {
         wait_for_device "fastboot" 45 || die "Device did not enter bootloader"
         return 0
     fi
+    log_warn "No device reported by adb/fastboot. Current fastboot output:"
+    local -a fb_cmd=()
+    [[ "${USE_SUDO}" == true ]] && fb_cmd+=(sudo)
+    fb_cmd+=("${FASTBOOT}")
+    "${fb_cmd[@]}" devices 2>&1 | sed 's/^/    /' || true
     die "No device found in adb/fastboot/fastbootd mode"
 }
 
@@ -432,6 +452,8 @@ flash_partition() {
         image_path="${KIRA_DIR}/${image}"
     elif [[ -f "${VARIANT_DIR}/${image}" ]]; then
         image_path="${VARIANT_DIR}/${image}"
+    elif [[ -n "${PRODUCT_VARIANT_DIR:-}" ]] && [[ -f "${PRODUCT_VARIANT_DIR}/${image}" ]]; then
+        image_path="${PRODUCT_VARIANT_DIR}/${image}"
     else
         log_warn "Image not found, skipping: ${image}"
         return 0
@@ -532,7 +554,7 @@ show_help() {
       ./flash_ps11.sh [OPTIONS]
 
   OPTIONS:
-      -v, --variant VARIANT   Device variant: kira|mn4|pdn4|pen4
+      -v, --variant VARIANT   Device variant: kira|mn4|pdn4|pen4|phn4|tan4|ten4
                               (default: kira)
       -s, --slot SLOT         Target slot: a|b (default: a)
       -d, --disable-avb       Use vbmeta with verification disabled
@@ -654,8 +676,8 @@ validate_environment() {
 
     # Check variant
     case "${VARIANT}" in
-        kira|mn4|pdn4|pen4) ;;
-        *) log_fatal "Invalid variant: ${VARIANT}. Use: kira|mn4|pdn4|pen4" ;;
+        kira|mn4|pdn4|pen4|phn4|tan4|ten4) ;;
+        *) log_fatal "Invalid variant: ${VARIANT}. Use: kira|mn4|pdn4|pen4|phn4|tan4|ten4" ;;
     esac
 
     # Set variant directories (both root-level and Kira-level)
@@ -664,6 +686,10 @@ validate_environment() {
     local root_variant_dir=""
     VARIANT_DIR="$(ps11_variant_root_dir "${VARIANT}")"
     root_variant_dir="${VARIANT_DIR}"
+
+    local product_variant
+    product_variant="$(ps11_product_variant "${VARIANT}")"
+    PRODUCT_VARIANT_DIR="$(ps11_variant_root_dir "${product_variant}")"
 
     # Validate slot
     case "${SLOT}" in
@@ -688,13 +714,17 @@ validate_environment() {
             fi
         done
 
-        local product_img="product-${VARIANT}.img"
-        local vbmeta_sys_img="vbmeta_system-${VARIANT}.img"
+        local product_img="product-${product_variant}.img"
+        local vbmeta_sys_img="vbmeta_system-${product_variant}.img"
 
         if [[ -f "${VARIANT_DIR}/${product_img}" ]]; then
             log_success "Variant product image: ${product_img}"
+        elif [[ -f "${KIRA_DIR}/${product_img}" ]]; then
+            log_success "Variant product image: ${KIRA_DIR}/${product_img}"
         elif [[ -f "${SCRIPT_DIR}/${product_img}" ]]; then
             log_success "Variant product image: ${SCRIPT_DIR}/${product_img}"
+        elif [[ -n "${PRODUCT_VARIANT_DIR:-}" ]] && [[ -f "${PRODUCT_VARIANT_DIR}/${product_img}" ]]; then
+            log_success "Variant product image: ${PRODUCT_VARIANT_DIR}/${product_img}"
         else
             log_error "Missing: ${product_img}"
             missing=$((missing + 1))
@@ -702,8 +732,12 @@ validate_environment() {
 
         if [[ -f "${VARIANT_DIR}/${vbmeta_sys_img}" ]]; then
             log_success "Variant vbmeta_system image: ${vbmeta_sys_img}"
+        elif [[ -f "${KIRA_DIR}/${vbmeta_sys_img}" ]]; then
+            log_success "Variant vbmeta_system image: ${KIRA_DIR}/${vbmeta_sys_img}"
         elif [[ -f "${SCRIPT_DIR}/${vbmeta_sys_img}" ]]; then
             log_success "Variant vbmeta_system image: ${SCRIPT_DIR}/${vbmeta_sys_img}"
+        elif [[ -n "${PRODUCT_VARIANT_DIR:-}" ]] && [[ -f "${PRODUCT_VARIANT_DIR}/${vbmeta_sys_img}" ]]; then
+            log_success "Variant vbmeta_system image: ${PRODUCT_VARIANT_DIR}/${vbmeta_sys_img}"
         else
             log_error "Missing: ${vbmeta_sys_img}"
             missing=$((missing + 1))
@@ -737,13 +771,15 @@ validate_environment() {
         fi
 
         # Variant-specific images (for official only)
-        local product_img="product-${VARIANT}.img"
-        local vbmeta_sys_img="vbmeta_system-${VARIANT}.img"
+        local product_img="product-${product_variant}.img"
+        local vbmeta_sys_img="vbmeta_system-${product_variant}.img"
 
         if [[ -f "${KIRA_DIR}/${product_img}" ]]; then
             log_success "Variant product image: ${product_img}"
         elif [[ -f "${root_variant_dir}/${product_img}" ]]; then
             log_success "Variant product image: ${root_variant_dir}/${product_img}"
+        elif [[ -n "${PRODUCT_VARIANT_DIR:-}" ]] && [[ -f "${PRODUCT_VARIANT_DIR}/${product_img}" ]]; then
+            log_success "Variant product image: ${PRODUCT_VARIANT_DIR}/${product_img}"
         else
             log_warn "Variant product image not found: ${product_img}"
         fi
@@ -752,6 +788,8 @@ validate_environment() {
             log_success "Variant vbmeta_system image: ${vbmeta_sys_img}"
         elif [[ -f "${root_variant_dir}/${vbmeta_sys_img}" ]]; then
             log_success "Variant vbmeta_system image: ${root_variant_dir}/${vbmeta_sys_img}"
+        elif [[ -n "${PRODUCT_VARIANT_DIR:-}" ]] && [[ -f "${PRODUCT_VARIANT_DIR}/${vbmeta_sys_img}" ]]; then
+            log_success "Variant vbmeta_system image: ${PRODUCT_VARIANT_DIR}/${vbmeta_sys_img}"
         else
             log_warn "Variant vbmeta_system image not found: ${vbmeta_sys_img}"
         fi
@@ -820,6 +858,7 @@ flash_non_slot_partitions() {
     log_info "Flashing non-slot partitions (LUN0)..."
     flash_partition "persist"         "persist.img"
     flash_partition "metadata"        "metadata.img"
+    flash_partition "logfs"           "logfs_ufs_8mb.bin"
     flash_partition "tombstones"      "tombstones.img"
     flash_partition "tombstones_sys"  "tombstones_sys.img"
     flash_partition "durable"         "durable.img"
@@ -858,7 +897,15 @@ flash_non_slot_partitions() {
             log_success "kitting OK"
         fi
     else
-        log_info "No kitting image for variant ${VARIANT^^} — skipping"
+        local saved_errors_kit=${ERRORS}
+        log_step "Erasing ${BOLD}kitting${NC} (no image for variant ${VARIANT^^})"
+        if ! fb_exec erase kitting; then
+            log_warn "kitting erase failed — skipping (optional)"
+            ERRORS=${saved_errors_kit}
+            SKIPPED=$((SKIPPED + 1))
+        else
+            log_success "kitting cleared"
+        fi
     fi
 
     log_success "Phase 2 complete: Non-slot partitions flashed"
@@ -911,13 +958,22 @@ flash_official_firmware() {
     flash_partition "multiimgoem_${SLOT}"   "multi_image.mbn"   optional
 
     # ── Additional firmware images ──
-    log_info "Flashing additional firmware (apdp, soccp, spu_service, storsec)..."
+    log_info "Flashing additional firmware (apdp, spuservice, storsec)..."
     if [[ -f "${SCRIPT_DIR}/apdp.mbn" ]]; then
-        flash_partition "apdp_${SLOT}"          "apdp.mbn"          optional
+        if [[ "${SLOT}" == "b" ]]; then
+            flash_partition "apdpb"             "apdp.mbn"          optional
+        else
+            flash_partition "apdp"              "apdp.mbn"          optional
+        fi
     fi
-    flash_partition "soccp_${SLOT}"         "soccp.mbn"         optional
-    flash_partition "spu_service_${SLOT}"   "spu_service.mbn"   optional
+    flash_partition "spuservice_${SLOT}"    "spu_service.mbn"   optional
     flash_partition "storsec"               "storsec.mbn"       optional
+
+    # ── vbmeta_system (must be flashed in bootloader mode) ──
+    local product_variant
+    product_variant="$(ps11_product_variant "${VARIANT}")"
+    local vbmeta_sys_img="vbmeta_system-${product_variant}.img"
+    flash_partition "vbmeta_system_${SLOT}"  "${vbmeta_sys_img}"
 
     if [[ ${SKIPPED} -gt 0 ]]; then
         log_warn "${SKIPPED} partition(s) skipped (LUN1/secure — use QFIL for these)"
@@ -943,8 +999,10 @@ flash_dynamic_partitions() {
     fb_exec wipe-super "${SCRIPT_DIR}/super_empty.img"
 
     # Determine variant-specific images
-    local product_img="product-${VARIANT}.img"
-    local vbmeta_sys_img="vbmeta_system-${VARIANT}.img"
+    local product_variant
+    product_variant="$(ps11_product_variant "${VARIANT}")"
+    local product_img="product-${product_variant}.img"
+    local vbmeta_sys_img="vbmeta_system-${product_variant}.img"
     local system_ext_img="system_ext-${VARIANT}.img"
     local userdata_img="userdata-${VARIANT}.img"
 
@@ -972,9 +1030,6 @@ flash_dynamic_partitions() {
 
     # Product partition: flash_partition searches SCRIPT_DIR → KIRA_DIR → VARIANT_DIR
     flash_partition "product_${SLOT}"        "${product_img}"
-
-    # vbmeta_system: variant-specific
-    flash_partition "vbmeta_system_${SLOT}"  "${vbmeta_sys_img}"
 
     # SKU and kitting are flashed in Phase 2 (fastboot mode) — NOT here.
     # fastbootd mode cannot see fixed partitions.
@@ -1042,8 +1097,10 @@ main_jenkins() {
     fi
 
     # Determine images
-    local product_img="product-${VARIANT}.img"
-    local vbmeta_sys_img="vbmeta_system-${VARIANT}.img"
+    local product_variant
+    product_variant="$(ps11_product_variant "${VARIANT}")"
+    local product_img="product-${product_variant}.img"
+    local vbmeta_sys_img="vbmeta_system-${product_variant}.img"
     local system_ext_img="system_ext-kira.img"
 
     # Show summary
@@ -1202,7 +1259,7 @@ main() {
     detect_rom_type
     echo -e "${DIM}  ROM type:  ${ROM_TYPE}${NC}"
     echo -e "${DIM}  Firmware:  $(basename "${SCRIPT_DIR}")${NC}"
-    echo -e "${DIM}  Script:    $(basename "$0") v1.2.0${NC}"
+    echo -e "${DIM}  Script:    $(basename "$0") v1.2.1${NC}"
     echo -e "${DIM}  Date:      $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 
     # Validate (uses ROM_TYPE to decide which images are required)

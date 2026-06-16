@@ -22,6 +22,7 @@ from flash_tool.profiles.auto_detect import detect_device, detect_variant, AUTO_
 from flash_tool.ui.theme import COLORS, FONTS, SPACING
 from flash_tool.ui.step_widget import StepWidget
 from flash_tool.ui.log_panel import LogPanel
+from flash_tool.ui import ask_yes_no
 
 
 class MainWindow(ctk.CTk):
@@ -52,12 +53,15 @@ class MainWindow(ctk.CTk):
             "PS11": {
                 "script": "flash_ps11.sh",
                 "variant_arg": "-v",
-                "variants": ["kira", "mn4", "pdn4", "pen4"],
+                "variants": ["kira", "mn4", "pdn4", "pen4", "phn4", "tan4", "ten4"],
                 "variant_dirs": {
                     "kira": "Kira",
                     "mn4": "MN4",
                     "pdn4": "PDN4",
                     "pen4": "PEN4",
+                    "phn4": "Kira/PHN4",
+                    "tan4": "Kira/TAN4",
+                    "ten4": "Kira/TEN4",
                 },
                 "default_args": ["-w"],
                 "default_variant": "kira",
@@ -1075,7 +1079,7 @@ class MainWindow(ctk.CTk):
         missing_optional = [k for k in optional_with_steps if k not in self.selected_images]
         if missing_optional:
             msg = f"The following images were not detected:\n{', '.join(missing_optional)}\n\nSteps using these images will fail.\nContinue anyway?"
-            if not messagebox.askyesno("Warning", msg):
+            if not ask_yes_no(self, "Warning", msg):
                 return
 
         # Confirm
@@ -1108,7 +1112,7 @@ class MainWindow(ctk.CTk):
                 f"⚠️  This will ERASE all data on the device!\n\n"
                 f"Continue?"
             )
-        if not messagebox.askyesno("Confirm Flash", msg):
+        if not ask_yes_no(self, "Confirm Flash", msg):
             return
 
         # Reset step widgets
@@ -1151,7 +1155,7 @@ class MainWindow(ctk.CTk):
     def _stop_flash(self):
         """Stop the flash process."""
         if self.worker and self.worker.is_alive():
-            if messagebox.askyesno("Confirm", "Stop flashing? This may leave your device in an unstable state."):
+            if ask_yes_no(self, "Confirm", "Stop flashing? This may leave your device in an unstable state."):
                 self.worker.stop()
 
     def _tick_total_timer(self):
@@ -1282,7 +1286,8 @@ class MainWindow(ctk.CTk):
 
     def _run_suw_only(self):
         """Run the Skip Setup Wizard steps standalone — no ROM folder needed."""
-        if not messagebox.askyesno(
+        if not ask_yes_no(
+            self,
             "Skip Setup Wizard",
             "This will mark the connected ADB device as already provisioned\n"
             "and reboot it, skipping the Android Setup Wizard on next boot.\n\n"
