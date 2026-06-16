@@ -275,13 +275,34 @@ def restart_application():
             del env["_MEIPASS"]
 
     try:
-        # Spawn the new process in a detached session so it lives independently
         if sys.platform == "win32":
             subprocess.Popen([current_exe] + args, env=env)
+            sys.exit(0)
         else:
-            subprocess.run(["sync"], check=False)  # Ensure filesystem syncs
-            subprocess.Popen([current_exe] + args, env=env, start_new_session=True)
-        sys.exit(0)
+            # Sync filesystem buffer to ensure the new binary is fully written
+            subprocess.run(["sync"], check=False)
+
+            # Unix double fork for robust process detachment and relaunch
+            pid = os.fork()
+            if pid == 0:
+                # First child: Create a new session to become session leader
+                os.setsid()
+                
+                # Second fork: Orphans the process so it is adopted by init
+                pid2 = os.fork()
+                if pid2 > 0:
+                    # Exit the first child immediately
+                    os._exit(0)
+                
+                # In second child (independent daemon): execute the new binary
+                try:
+                    os.execve(current_exe, [current_exe] + args, env)
+                except Exception:
+                    os._exit(1)
+            else:
+                # Parent process: Wait for first child (which exits immediately)
+                os.waitpid(pid, 0)
+                sys.exit(0)
     except Exception as e:
         print(f"Failed to restart application: {e}", file=sys.stderr)
         sys.exit(1)
