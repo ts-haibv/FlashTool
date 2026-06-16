@@ -89,17 +89,21 @@ class ConfirmDialog(ctk.CTkToplevel):
         )
         self.no_btn.pack(side="right")
 
-        # 3. Message label (packed in the middle, filling remaining space)
-        self.msg_label = ctk.CTkLabel(
+        # 3. Message textbox (packed in the middle, scrollable, borderless to look like a label)
+        self.msg_box = ctk.CTkTextbox(
             self,
-            text=message,
             font=FONTS["body"],
+            fg_color=COLORS["bg_primary"],
             text_color=COLORS["text_secondary"],
-            justify="left",
-            anchor="w",
-            wraplength=432
+            wrap="word",
+            activate_scrollbars=True,
+            scrollbar_button_color=COLORS["scrollbar_fg"],
+            scrollbar_button_hover_color=COLORS["bg_hover"],
+            border_width=0,
         )
-        self.msg_label.pack(fill="both", expand=True, padx=24, pady=12)
+        self.msg_box.pack(fill="both", expand=True, padx=24, pady=12)
+        self.msg_box.insert("1.0", message)
+        self.msg_box.configure(state="disabled")
 
         # Focus and keyboard bindings
         self.yes_btn.focus_set()

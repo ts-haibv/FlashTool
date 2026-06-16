@@ -1259,7 +1259,7 @@ main() {
     detect_rom_type
     echo -e "${DIM}  ROM type:  ${ROM_TYPE}${NC}"
     echo -e "${DIM}  Firmware:  $(basename "${SCRIPT_DIR}")${NC}"
-    echo -e "${DIM}  Script:    $(basename "$0") v1.2.2${NC}"
+    echo -e "${DIM}  Script:    $(basename "$0") v1.2.3${NC}"
     echo -e "${DIM}  Date:      $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 
     # Validate (uses ROM_TYPE to decide which images are required)
