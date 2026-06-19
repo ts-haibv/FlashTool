@@ -171,6 +171,7 @@ class MainWindow(ctk.CTk):
 
         # Device polling
         self._poll_running = True
+        self._poll_after_id = None
 
         # Build UI — footer must be packed before body so that pack's expand
         # doesn't let the body claim all vertical space before the footer lands.
@@ -568,7 +569,7 @@ class MainWindow(ctk.CTk):
         self.selected_images.clear()
 
         # Build image selectors for each partition
-        partitions = self.MODEL_PARTITIONS[self.current_model.get()]
+        partitions = self.MODEL_PARTITIONS.get(self.current_model.get(), [])
 
         if not partitions:
             ctk.CTkLabel(
@@ -1301,6 +1302,14 @@ class MainWindow(ctk.CTk):
 
     def _lock_controls(self):
         """Disable all configuration controls during flashing."""
+        self._poll_running = False
+        if hasattr(self, "_poll_after_id") and self._poll_after_id:
+            try:
+                self.after_cancel(self._poll_after_id)
+            except Exception:
+                pass
+            self._poll_after_id = None
+
         self.model_combo.configure(state="disabled")
         self.rom_entry.configure(state="disabled")
         self.browse_btn.configure(state="disabled")
@@ -1319,6 +1328,9 @@ class MainWindow(ctk.CTk):
 
     def _unlock_controls(self):
         """Re-enable configuration controls after flashing completes."""
+        self._poll_running = True
+        self._poll_device()
+
         self.model_combo.configure(state="readonly")
         self.rom_entry.configure(state="normal")
         self.browse_btn.configure(state="normal")
@@ -1521,8 +1533,15 @@ class MainWindow(ctk.CTk):
             state, serial = get_device_state()
             self.after(0, self._update_device_ui, state, serial)
 
+        if hasattr(self, "_poll_after_id") and self._poll_after_id:
+            try:
+                self.after_cancel(self._poll_after_id)
+            except Exception:
+                pass
+            self._poll_after_id = None
+
         threading.Thread(target=check, daemon=True).start()
-        self.after(3000, self._poll_device)
+        self._poll_after_id = self.after(3000, self._poll_device)
 
     def _update_device_ui(self, state: str, serial: str | None):
         """Update device status display."""
