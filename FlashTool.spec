@@ -12,6 +12,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('assets/icon.png', 'assets'),
+        ('flash_ps10.sh', '.'),
         ('flash_ps11.sh', '.'),
         ('flash_e11.sh', '.'),
         ('flash_e10.sh', '.'),

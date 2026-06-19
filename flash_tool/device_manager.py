@@ -4,7 +4,7 @@ import subprocess
 import time
 from typing import Literal
 
-from flash_tool.config import ADB_PATH, FASTBOOT_PATH
+from flash_tool.config import ADB_PATH, FASTBOOT_PATH, get_clean_env
 
 DeviceState = Literal["fastboot", "adb", "disconnected"]
 
@@ -17,6 +17,7 @@ def _run_cmd(args: list[str], timeout: int = 10) -> tuple[int, str, str]:
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=get_clean_env(),
         )
         return proc.returncode, proc.stdout, proc.stderr
     except FileNotFoundError:

@@ -6,6 +6,14 @@ from flash_tool.flash_worker import FlashStep
 SCRIPT_TIMEOUT_SECONDS = 7200
 
 SCRIPT_PHASES = {
+    "PS10": [
+        ("Validate package and fastboot device", r"ENVIRONMENT VALIDATION|SHARP AQUOS"),
+        ("Flash bootstrap partitions", r"PHASE: 1 — BOOTSTRAP|BOOTSTRAP"),
+        ("Flash non-slot partitions", r"PHASE: 2 — NON-SLOT|NON-SLOT PARTITIONS"),
+        ("Flash firmware partitions", r"PHASE: 3 — FIRMWARE|FIRMWARE PARTITIONS"),
+        ("Flash dynamic partitions in fastbootd", r"PHASE: 4 — DYNAMIC|DYNAMIC PARTITIONS"),
+        ("Wipe userdata and finalize", r"PHASE: 5 — USERDATA|USERDATA & FINALIZE"),
+    ],
     "PS11": [
         ("Validate package and fastboot device", r"ENVIRONMENT VALIDATION|SHARP AQUOS KIRA"),
         ("Flash bootstrap partitions", r"PHASE: 1 — BOOTSTRAP|BOOTSTRAP"),

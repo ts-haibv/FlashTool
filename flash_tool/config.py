@@ -124,6 +124,22 @@ def scan_regions(rom_path: str) -> list[str]:
     return sorted(regions)
 
 
+def get_clean_env() -> dict[str, str]:
+    """Get a copy of the environment with PyInstaller's library search path overrides removed or restored."""
+    env = os.environ.copy()
+    if getattr(sys, "frozen", False):
+        if "LD_LIBRARY_PATH_ORIG" in env:
+            env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+
+        if "DYLD_LIBRARY_PATH_ORIG" in env:
+            env["DYLD_LIBRARY_PATH"] = env["DYLD_LIBRARY_PATH_ORIG"]
+        else:
+            env.pop("DYLD_LIBRARY_PATH", None)
+    return env
+
+
 def get_file_size_mb(filepath: str) -> float:
     """Return file size in MB."""
     try:
@@ -134,6 +150,6 @@ def get_file_size_mb(filepath: str) -> float:
 
 # ── App Info ────────────────────────────────────────────────────────────────
 APP_NAME = "FlashTool"
-APP_VERSION = "1.2.6"
+APP_VERSION = "1.2.7"
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 750

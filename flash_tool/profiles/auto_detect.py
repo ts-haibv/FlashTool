@@ -6,6 +6,10 @@ import glob
 AUTO_DETECT_LABEL = "Firmware Flash (Auto)"
 
 DEVICE_SIGNATURES = {
+    "PS10": {
+        "variant_dirs": ["MN3", "PDN3", "PEN3", "PHN3", "TAN3", "TDN3", "TEN3"],
+        "file_patterns": ["system_ext-lockon.img"],
+    },
     "PS11": {
         "variant_dirs": ["Kira", "MN4", "PDN4", "PEN4", "Kira/PHN4", "Kira/TAN4", "Kira/TEN4"],
         "file_patterns": ["system_ext-*.img"],

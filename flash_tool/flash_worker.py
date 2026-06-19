@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable
 
-from flash_tool.config import ADB_PATH, FASTBOOT_PATH
+from flash_tool.config import ADB_PATH, FASTBOOT_PATH, get_clean_env
 from flash_tool.device_manager import wait_for_device, wait_for_reboot
 
 
@@ -258,14 +258,12 @@ class FlashWorker(threading.Thread):
             step.progress = 1.0
             self._emit_progress(step, "Done")
 
-    def _build_env(self, step: FlashStep) -> dict[str, str] | None:
+    def _build_env(self, step: FlashStep) -> dict[str, str]:
         """Build subprocess environment for command execution."""
-        if step.command != "script":
-            return None
-
-        env = os.environ.copy()
-        if self.rom_path:
-            env["FLASH_FIRMWARE_DIR"] = self.rom_path
+        env = get_clean_env()
+        if step.command == "script":
+            if self.rom_path:
+                env["FLASH_FIRMWARE_DIR"] = self.rom_path
         return env
 
     def _handle_unlock_step(self, step: FlashStep) -> bool:
@@ -278,7 +276,7 @@ class FlashWorker(threading.Thread):
         # 1. Pre-check if already unlocked
         self._log("🔍 Checking current unlock status...")
         try:
-            res = subprocess.run([binary, "getvar", "unlocked"], capture_output=True, text=True, timeout=5)
+            res = subprocess.run([binary, "getvar", "unlocked"], capture_output=True, text=True, timeout=5, env=get_clean_env())
             combined = (res.stdout + res.stderr).lower()
             if "unlocked: yes" in combined:
                 self._log("✅ Bootloader already unlocked, skipping step")
@@ -300,7 +298,7 @@ class FlashWorker(threading.Thread):
         cmd = [binary, "flashing", "unlock"]
         self._log(f"$ {' '.join(cmd)}")
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=step.timeout)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=step.timeout, env=get_clean_env())
             out = proc.stdout + proc.stderr
             self._log(out)
             out_lower = out.lower()
@@ -350,7 +348,7 @@ class FlashWorker(threading.Thread):
             self._emit_progress(step, f"Waiting for confirmation... {elapsed:.0f}s")
 
             try:
-                res = subprocess.run([binary, "getvar", "unlocked"], capture_output=True, text=True, timeout=5)
+                res = subprocess.run([binary, "getvar", "unlocked"], capture_output=True, text=True, timeout=5, env=get_clean_env())
                 combined = (res.stdout + res.stderr).lower()
                 if "unlocked: yes" in combined:
                     self._log("✅ Bootloader unlock confirmed!")

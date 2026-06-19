@@ -12,6 +12,7 @@ from flash_tool.config import (
     APP_NAME, APP_VERSION, WINDOW_WIDTH, WINDOW_HEIGHT,
     PLATFORM_NAME, ADB_PATH, FASTBOOT_PATH,
     scan_rom_folder, scan_regions, get_file_size_mb,
+    get_clean_env,
 )
 from flash_tool.device_manager import get_device_state
 from flash_tool.flash_worker import FlashWorker, FlashProgress, StepStatus
@@ -84,11 +85,28 @@ class MainWindow(ctk.CTk):
         self.MODEL_PARTITIONS = {
             "G6": ["super", "vbmeta", "system", "product", "system_ext"],
             "Other Model": ["boot", "dtbo", "init_boot", "vbmeta", "recovery", "system", "system_ext", "vendor", "product", "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"],
+            "PS10": [],
             "PS11": [],
             "E11": [],
             "E10": [],
         }
         self.SCRIPT_PROFILES = {
+            "PS10": {
+                "script": "flash_ps10.sh",
+                "variant_arg": "-v",
+                "variants": ["mn3", "pdn3", "pen3", "phn3", "tan3", "tdn3", "ten3"],
+                "variant_dirs": {
+                    "mn3": "MN3",
+                    "pdn3": "PDN3",
+                    "pen3": "PEN3",
+                    "phn3": "PHN3",
+                    "tan3": "TAN3",
+                    "tdn3": "TDN3",
+                    "ten3": "TEN3",
+                },
+                "default_args": ["-w"],
+                "default_variant": "mn3",
+            },
             "PS11": {
                 "script": "flash_ps11.sh",
                 "variant_arg": "-v",
@@ -819,12 +837,7 @@ class MainWindow(ctk.CTk):
 
         # Clean environment under PyInstaller to prevent Zenity from crashing
         # due to library version mismatch (e.g. GLib/GTK)
-        env = os.environ.copy()
-        if getattr(sys, "frozen", False):
-            if "LD_LIBRARY_PATH_ORIG" in env:
-                env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
-            elif "LD_LIBRARY_PATH" in env:
-                del env["LD_LIBRARY_PATH"]
+        env = get_clean_env()
 
         initial_dir = self.rom_path or os.path.expanduser("~")
         try:
