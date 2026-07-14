@@ -22,6 +22,9 @@ FASTBOOT_CHUNK_SIZE="32M"
 # ROM_TYPE: "official" | "jenkins" | "" (auto-detect from boot.img presence)
 ROM_TYPE=""
 
+VALID_MODELS=(MC6 PDC6 PEC6 PHC6 PKC6)
+BASE_MODEL="MC6"   # Always the source of bootloader binaries
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -32,7 +35,7 @@ Usage:
     Jenkins   — partial ROM (system/system_ext/product + init_boot/pvmfw only)
 
 Options:
-  -m, --model MODEL       SKU folder: MC6, PDC6, PEC6. Default: MC6
+  -m, --model MODEL       SKU folder: MC6, PDC6, PEC6, PHC6, PKC6. Default: MC6
   -s, --serial SERIAL     adb/fastboot serial (multi-device)
       --wipe              Erase userdata after flash
       --disable-verity    Flash vbmeta_verification_disabled.img (default)
@@ -46,6 +49,10 @@ Options:
   -h, --help              Show this help
 
 Device must be unlocked. Script uses fastboot/fastbootd only — not EDL/QFIL.
+Bootloader images always come from MC6/.
+SKU folders may be full (product/vbmeta) or kitting-only (PHC6/PKC6):
+  product/vbmeta_system fall back to MC6/ when missing from the SKU folder;
+  kitting.img prefers the SKU folder, then MC6/.
 EOF
 }
 
@@ -97,6 +104,23 @@ retry() {
 
 require_tool() { command -v "$1" >/dev/null 2>&1 || die "Missing tool: $1"; }
 require_file() { [[ -f "$1" ]] || die "Missing file: $1"; }
+
+first_existing() {
+  for f in "$@"; do
+    [[ -f "$f" ]] && echo "$f" && return 0
+  done
+  echo ""
+}
+
+# Resolve a SKU-specific image, falling back to the BASE_MODEL (MC6) copy.
+# Usage: resolve_sku_file <sku-relative-name> <base-relative-name>
+# Example: resolve_sku_file "product-phc6.img" "product-mc6.img"
+resolve_sku_file() {
+  local sku_name="$1" base_name="$2"
+  first_existing \
+    "$SCRIPT_DIR/$MODEL/$sku_name" \
+    "$SCRIPT_DIR/$BASE_MODEL/$base_name"
+}
 
 flash_if_exists() {
   local partition="$1" image="$2"
@@ -263,30 +287,37 @@ flash_official_bootstrap() {
 
 flash_official_bootloader() {
   local model_dir="$1" model_lower="$2" vbmeta="$3"
+  local base_dir="$SCRIPT_DIR/$BASE_MODEL"
+  local base_lower="${BASE_MODEL,,}"
+  local vbmeta_system kitting
+
+  vbmeta_system="$(resolve_sku_file "vbmeta_system-$model_lower.img" "vbmeta_system-$base_lower.img")"
+  kitting="$(resolve_sku_file "kitting.img" "kitting.img")"
+
   log "Flash bootloader and boot-slot partitions"
-  flash_slot_if_exists xbl          "$model_dir/xbl_s.melf"
-  flash_slot_if_exists xbl_config   "$model_dir/xbl_config.elf"
-  flash_slot_if_exists multiimgqti  "$model_dir/multi_image_qti.mbn"
-  flash_slot_if_exists multiimgoem  "$model_dir/multi_image.mbn"
-  flash_slot_if_exists uefi         "$model_dir/uefi.elf"
-  flash_slot_if_exists aop          "$model_dir/aop.mbn"
-  flash_slot_if_exists aop_config   "$model_dir/aop_devcfg.mbn"
-  flash_slot_if_exists tz           "$model_dir/tz.mbn"
-  flash_slot_if_exists hyp          "$model_dir/hypvm.mbn"
-  flash_slot_raw       modem        "$model_dir/NON-HLOS.bin"
-  flash_slot_raw       bluetooth    "$model_dir/BTFM.bin"
-  flash_slot_if_exists abl          "$model_dir/abl.elf"
-  flash_slot_raw       dsp          "$model_dir/dspso.bin"
-  flash_slot_if_exists keymaster    "$model_dir/keymint.mbn"
-  flash_slot_if_exists devcfg       "$model_dir/devcfg.mbn"
-  flash_slot_if_exists qupfw        "$model_dir/qupv3fw.elf"
-  flash_slot_if_exists uefisecapp   "$model_dir/uefi_sec.mbn"
-  flash_slot_if_exists imagefv      "$model_dir/imagefv.elf"
-  flash_slot_if_exists shrm         "$model_dir/shrm.elf"
-  flash_slot_if_exists cpucp        "$model_dir/cpucp.elf"
-  flash_slot_if_exists featenabler  "$model_dir/featenabler.mbn"
-  flash_slot_if_exists xbl_ramdump  "$model_dir/XblRamdump.elf"
-  flash_slot_if_exists cpucp_dtb    "$model_dir/cpucp_dtbs.elf"
+  flash_slot_if_exists xbl          "$base_dir/xbl_s.melf"
+  flash_slot_if_exists xbl_config   "$base_dir/xbl_config.elf"
+  flash_slot_if_exists multiimgqti  "$base_dir/multi_image_qti.mbn"
+  flash_slot_if_exists multiimgoem  "$base_dir/multi_image.mbn"
+  flash_slot_if_exists uefi         "$base_dir/uefi.elf"
+  flash_slot_if_exists aop          "$base_dir/aop.mbn"
+  flash_slot_if_exists aop_config   "$base_dir/aop_devcfg.mbn"
+  flash_slot_if_exists tz           "$base_dir/tz.mbn"
+  flash_slot_if_exists hyp          "$base_dir/hypvm.mbn"
+  flash_slot_raw       modem        "$base_dir/NON-HLOS.bin"
+  flash_slot_raw       bluetooth    "$base_dir/BTFM.bin"
+  flash_slot_if_exists abl          "$base_dir/abl.elf"
+  flash_slot_raw       dsp          "$base_dir/dspso.bin"
+  flash_slot_if_exists keymaster    "$base_dir/keymint.mbn"
+  flash_slot_if_exists devcfg       "$base_dir/devcfg.mbn"
+  flash_slot_if_exists qupfw        "$base_dir/qupv3fw.elf"
+  flash_slot_if_exists uefisecapp   "$base_dir/uefi_sec.mbn"
+  flash_slot_if_exists imagefv      "$base_dir/imagefv.elf"
+  flash_slot_if_exists shrm         "$base_dir/shrm.elf"
+  flash_slot_if_exists cpucp        "$base_dir/cpucp.elf"
+  flash_slot_if_exists featenabler  "$base_dir/featenabler.mbn"
+  flash_slot_if_exists xbl_ramdump  "$base_dir/XblRamdump.elf"
+  flash_slot_if_exists cpucp_dtb    "$base_dir/cpucp_dtbs.elf"
   flash_slot_if_exists pvmfw        "$SCRIPT_DIR/pvmfw.img"
   flash_slot_if_exists boot         "$SCRIPT_DIR/boot.img"
   flash_slot_if_exists init_boot    "$SCRIPT_DIR/init_boot.img"
@@ -294,21 +325,23 @@ flash_official_bootloader() {
   flash_slot_if_exists recovery     "$SCRIPT_DIR/recovery.img"
   flash_slot_if_exists dtbo         "$SCRIPT_DIR/dtbo.img"
   flash_slot_if_exists vbmeta       "$vbmeta"
-  flash_slot_if_exists vbmeta_system "$model_dir/vbmeta_system-$model_lower.img"
+  [[ -n "$vbmeta_system" ]] && flash_slot_if_exists vbmeta_system "$vbmeta_system"
   flash_slot_if_exists version      "$SCRIPT_DIR/version.img"
-  flash_slot_if_exists sdl          "$model_dir/shprloader.img"
-  flash_slot_if_exists ssfd         "$model_dir/ssfd.img"
+  flash_slot_if_exists sdl          "$base_dir/shprloader.img"
+  flash_slot_if_exists ssfd         "$base_dir/ssfd.img"
   log "Flash physical non-slot partitions"
   flash_if_exists persist    "$SCRIPT_DIR/persist.img"
   flash_if_exists metadata   "$SCRIPT_DIR/metadata.img"
   flash_if_exists durable    "$SCRIPT_DIR/durable.img"
   flash_if_exists tombstones "$SCRIPT_DIR/tombstones.img"
-  flash_if_exists kitting    "$model_dir/kitting.img"
+  [[ -n "$kitting" ]] && flash_if_exists kitting "$kitting"
 }
 
 main_official() {
   local model_dir="$SCRIPT_DIR/$MODEL"
   local model_lower="${MODEL,,}"
+  local base_lower="${BASE_MODEL,,}"
+  local product_img vbmeta_system_img
 
   [[ -d "$model_dir" ]] || die "Missing model folder: $model_dir"
   require_file "$SCRIPT_DIR/boot.img"
@@ -319,8 +352,12 @@ main_official() {
   require_file "$SCRIPT_DIR/system_ext-suletta.img"
   require_file "$SCRIPT_DIR/vendor.img"
   require_file "$SCRIPT_DIR/odm.img"
-  require_file "$model_dir/product-$model_lower.img"
-  require_file "$model_dir/vbmeta_system-$model_lower.img"
+
+  # PHC6/PKC6 may only contain kitting.img — reuse MC6 product/vbmeta_system.
+  product_img="$(resolve_sku_file "product-$model_lower.img" "product-$base_lower.img")"
+  vbmeta_system_img="$(resolve_sku_file "vbmeta_system-$model_lower.img" "vbmeta_system-$base_lower.img")"
+  [[ -n "$product_img" ]] || die "Missing product image (tried $MODEL/ and $BASE_MODEL/)"
+  [[ -n "$vbmeta_system_img" ]] || die "Missing vbmeta_system image (tried $MODEL/ and $BASE_MODEL/)"
 
   local vbmeta="$SCRIPT_DIR/vbmeta.img"
   (( DISABLE_VERITY )) && vbmeta="$SCRIPT_DIR/vbmeta_verification_disabled.img"
@@ -342,7 +379,7 @@ main_official() {
   flash_if_exists system      "$SCRIPT_DIR/system.img"
   flash_if_exists system_ext  "$SCRIPT_DIR/system_ext-suletta.img"
   flash_if_exists vendor      "$SCRIPT_DIR/vendor.img"
-  flash_if_exists product     "$model_dir/product-$model_lower.img"
+  flash_if_exists product     "$product_img"
   flash_if_exists odm         "$SCRIPT_DIR/odm.img"
   flash_if_exists system_dlkm "$SCRIPT_DIR/system_dlkm.img"
   flash_if_exists vendor_dlkm "$SCRIPT_DIR/vendor_dlkm.img"
@@ -350,8 +387,12 @@ main_official() {
 
   if (( WIPE )); then
     log "Wipe userdata"
-    if [[ -f "$model_dir/userdata-$model_lower.img" ]]; then
-      run_fastboot flash userdata "$model_dir/userdata-$model_lower.img"
+    local userdata
+    userdata="$(first_existing \
+      "$model_dir/userdata-$model_lower.img" \
+      "$SCRIPT_DIR/$BASE_MODEL/userdata-$base_lower.img")"
+    if [[ -n "$userdata" ]]; then
+      run_fastboot flash userdata "$userdata"
     else
       run_fastboot erase userdata
     fi
@@ -380,6 +421,8 @@ main_official() {
 main_jenkins() {
   local model_dir="$SCRIPT_DIR/$MODEL"
   local model_lower="${MODEL,,}"
+  local base_lower="${BASE_MODEL,,}"
+  local product_img vbmeta_system_img
 
   local vbmeta; vbmeta="$(find_bundled_vbmeta)"
   if [[ -z "$vbmeta" ]]; then
@@ -392,8 +435,11 @@ main_jenkins() {
   require_file "$SCRIPT_DIR/pvmfw.img"
   require_file "$SCRIPT_DIR/system.img"
   require_file "$SCRIPT_DIR/system_ext-suletta.img"
-  require_file "$model_dir/product-$model_lower.img"
-  require_file "$model_dir/vbmeta_system-$model_lower.img"
+
+  product_img="$(resolve_sku_file "product-$model_lower.img" "product-$base_lower.img")"
+  vbmeta_system_img="$(resolve_sku_file "vbmeta_system-$model_lower.img" "vbmeta_system-$base_lower.img")"
+  [[ -n "$product_img" ]] || die "Missing product image (tried $MODEL/ and $BASE_MODEL/)"
+  [[ -n "$vbmeta_system_img" ]] || die "Missing vbmeta_system image (tried $MODEL/ and $BASE_MODEL/)"
 
   confirm_destructive_flash
   enter_bootloader
@@ -422,7 +468,7 @@ main_jenkins() {
   fi
   flash_dynamic_a "system"     "$SCRIPT_DIR/system.img"
   flash_dynamic_a "system_ext" "$SCRIPT_DIR/system_ext-suletta.img"
-  flash_dynamic_a "product"    "$model_dir/product-$model_lower.img"
+  flash_dynamic_a "product"    "$product_img"
 
   if (( WIPE )); then
     log "Wipe userdata"
@@ -437,7 +483,7 @@ main_jenkins() {
   wait_for_fastboot_device || die "Device did not return to bootloader."
 
   log "Flash bootloader and boot-slot partitions"
-  flash_slot_if_exists vbmeta_system "$model_dir/vbmeta_system-$model_lower.img"
+  flash_slot_if_exists vbmeta_system "$vbmeta_system_img"
 
   log "Set active slot $TARGET_SLOT"
   run_fastboot --set-active="$TARGET_SLOT"
@@ -488,11 +534,26 @@ main() {
   parse_args "$@"
   MODEL="${MODEL^^}"
 
+  # Validate model
+  local valid=0
+  for m in "${VALID_MODELS[@]}"; do [[ "$MODEL" == "$m" ]] && valid=1 && break; done
+  (( valid )) || die "Unknown model: $MODEL. Valid: ${VALID_MODELS[*]}"
+
+  local model_dir="$SCRIPT_DIR/$MODEL"
+  local base_dir="$SCRIPT_DIR/$BASE_MODEL"
+
   require_tool adb
   require_tool fastboot
 
+  # Base bootloader dir must always exist for Official; Jenkins only needs SKU dir
+  [[ -d "$model_dir" ]] || die "Missing model folder: $model_dir"
+
   detect_rom_type
   echo "==> ROM type: $ROM_TYPE (SCRIPT_DIR=$SCRIPT_DIR)"
+
+  if [[ "$ROM_TYPE" == "official" ]]; then
+    [[ -d "$base_dir" ]] || die "Missing base bootloader folder: $base_dir"
+  fi
 
   if [[ "$ROM_TYPE" == "jenkins" ]]; then
     main_jenkins

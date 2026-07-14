@@ -58,7 +58,7 @@ flash_tool/
 | Script | Device | Language | Key Behaviors |
 |--------|--------|----------|---------------|
 | `flash_ps11.sh` | PS11 (Sharp Aquos KIRA) | Bash | 4-phase: bootloader/firmware → non-slot → dynamic → userdata/finalize |
-| `flash_e11.sh` | E11 | Bash | Auto Official/Jenkins detect; fastbootd; slot selection; verity disable |
+| `flash_e11.sh` | E11 | Bash | Auto Official/Jenkins detect; variants MC6/PDC6/PEC6/PHC6/PKC6; fastbootd; slot selection |
 | `flash_e10.sh` | E10 | Bash | Multi-variant (MC5, PDC5, PEC5, PHC5, PKC5, TAC5, TDC5, TEC5) |
 
 ## Dependencies

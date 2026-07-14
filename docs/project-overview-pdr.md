@@ -32,7 +32,7 @@ FlashTool is a cross-platform desktop application for flashing ROM images onto A
 | G6 (RAMBA) | Python profile (`g6_ramba.py`) | Step-by-step adb/fastboot; optional `super.img` or individual partitions |
 | Other Model | Python profile (`other_model.py`) | Flexible partition flash; supports fastbootd, region variants |
 | PS11 | Bash script (`flash_ps11.sh`) | Sharp Aquos KIRA; 4-phase flash with variants: `kira`, `mn4`, `pdn4`, `pen4` |
-| E11 | Bash script (`flash_e11.sh`) | Auto-detects Official vs Jenkins ROM; variants: `MC6`, `PDC6`, `PEC6` |
+| E11 | Bash script (`flash_e11.sh`) | Auto-detects Official vs Jenkins ROM; variants: `MC6`, `PDC6`, `PEC6`, `PHC6`, `PKC6` |
 | E10 | Bash script (`flash_e10.sh`) | Variants: `MC5`, `PDC5`, `PEC5`, `PHC5`, `PKC5`, `TAC5`, `TDC5`, `TEC5` |
 
 ## Product Design Requirements (PDR)

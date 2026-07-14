@@ -126,11 +126,13 @@ class MainWindow(ctk.CTk):
             "E11": {
                 "script": "flash_e11.sh",
                 "variant_arg": "-m",
-                "variants": ["MC6", "PDC6", "PEC6"],
+                "variants": ["MC6", "PDC6", "PEC6", "PHC6", "PKC6"],
                 "variant_dirs": {
                     "MC6": "MC6",
                     "PDC6": "PDC6",
                     "PEC6": "PEC6",
+                    "PHC6": "PHC6",
+                    "PKC6": "PKC6",
                 },
                 "default_args": ["--wipe"],
                 "default_variant": "MC6",

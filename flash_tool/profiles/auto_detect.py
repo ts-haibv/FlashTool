@@ -15,7 +15,7 @@ DEVICE_SIGNATURES = {
         "file_patterns": ["system_ext-*.img"],
     },
     "E11": {
-        "variant_dirs": ["MC6", "PDC6", "PEC6"],
+        "variant_dirs": ["MC6", "PDC6", "PEC6", "PHC6", "PKC6"],
         "file_patterns": ["vendor.img", "boot.img"],
     },
     "E10": {
