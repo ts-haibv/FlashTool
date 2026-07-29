@@ -22,7 +22,7 @@ FlashTool is a cross-platform desktop application for flashing ROM images onto A
 | Per-step progress | Sparse-image upload progress parsed from fastboot output |
 | Visual step tracker | Card-based step list with status icons, elapsed time, and progress bars |
 | Skip SUW | Optional post-flash step to bypass Android Setup Wizard |
-| Multi-device support | G6 RAMBA, generic "Other Model", PS11, E11, E10 |
+| Multi-device support | G6 RAMBA, generic "Other Model", PS11, E11, E10, E9 |
 | Cross-platform | Windows and Ubuntu/Linux executables via PyInstaller |
 
 ## Supported Devices
@@ -34,6 +34,7 @@ FlashTool is a cross-platform desktop application for flashing ROM images onto A
 | PS11 | Bash script (`flash_ps11.sh`) | Sharp Aquos KIRA; 4-phase flash with variants: `kira`, `mn4`, `pdn4`, `pen4` |
 | E11 | Bash script (`flash_e11.sh`) | Auto-detects Official vs Jenkins ROM; variants: `MC6`, `PDC6`, `PEC6`, `PHC6`, `PKC6` |
 | E10 | Bash script (`flash_e10.sh`) | Variants: `MC5`, `PDC5`, `PEC5`, `PHC5`, `PKC5`, `TAC5`, `TDC5`, `TEC5` |
+| E9 | Bash script (`flash_e9.sh`) | Variants: `MC4`, `PDC4`, `PEC4`, `PHC4`, `PKC4`, `TAC4`, `TDC4`, `TEC4` (NAZE 17-OS) |
 
 ## Product Design Requirements (PDR)
 

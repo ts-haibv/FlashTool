@@ -89,6 +89,7 @@ class MainWindow(ctk.CTk):
             "PS11": [],
             "E11": [],
             "E10": [],
+            "E9": [],
         }
         self.SCRIPT_PROFILES = {
             "PS10": {
@@ -153,6 +154,23 @@ class MainWindow(ctk.CTk):
                 },
                 "default_args": ["--wipe"],
                 "default_variant": "MC5",
+            },
+            "E9": {
+                "script": "flash_e9.sh",
+                "variant_arg": "-m",
+                "variants": ["MC4", "PDC4", "PEC4", "PHC4", "PKC4", "TAC4", "TDC4", "TEC4"],
+                "variant_dirs": {
+                    "MC4": "MC4",
+                    "PDC4": "PDC4",
+                    "PEC4": "PEC4",
+                    "PHC4": "PHC4",
+                    "PKC4": "PKC4",
+                    "TAC4": "TAC4",
+                    "TDC4": "TDC4",
+                    "TEC4": "TEC4",
+                },
+                "default_args": ["--wipe"],
+                "default_variant": "MC4",
             },
         }
         self.rom_path: str = ""

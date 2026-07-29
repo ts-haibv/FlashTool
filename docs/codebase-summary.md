@@ -16,13 +16,14 @@
 | `flash_tool/ui/theme.py` | 93 | Dark theme color palette, fonts, spacing constants, status config mapping |
 | `flash_tool/profiles/g6_ramba.py` | 311 | G6 RAMBA profile builder: 16–18 step sequence |
 | `flash_tool/profiles/other_model.py` | 344 | Generic device profile: flexible partitions, fastbootd, region variants |
-| `flash_tool/profiles/script_device.py` | 69 | Script-backed profile builder (PS11, E11, E10) with visual phase steps |
+| `flash_tool/profiles/script_device.py` | 88 | Script-backed profile builder (PS11, E11, E10, E9) with visual phase steps |
 | `flash_ps11.sh` | 1246 | PS11 flashing script: 4-phase Qualcomm Snapdragon flash |
 | `flash_e11.sh` | 504 | E11 flashing script: auto ROM detect, fastbootd support |
-| `flash_e10.sh` | 438 | E10 flashing script: multi-variant support |
-| `FlashTool.spec` | 82 | PyInstaller spec: includes assets, scripts, customtkinter data files |
+| `flash_e10.sh` | 537 | E10 flashing script: multi-variant support |
+| `flash_e9.sh` | 545 | E9 flashing script: multi-variant support (MC4..TEC4, NAZE 17-OS) |
+| `FlashTool.spec` | 83 | PyInstaller spec: includes assets, scripts, customtkinter data files |
 | `.github/workflows/release.yml` | 165 | CI/CD: builds Linux + Windows binaries, .deb package, GitHub release |
-| `scripts/build_linux.sh` | 136 | Local Linux build: PyInstaller + .deb packaging |
+| `scripts/build_linux.sh` | 144 | Local Linux build: PyInstaller + .deb packaging |
 | `scripts/build_windows.bat` | 80 | Local Windows build: PyInstaller + Inno Setup script generation |
 | `scripts/run_linux.sh` | 50 | Dev launcher for Linux (venv activate + python main.py) |
 | `scripts/run_windows.bat` | 54 | Dev launcher for Windows (venv activate + python main.py) |
@@ -60,6 +61,7 @@ flash_tool/
 | `flash_ps11.sh` | PS11 (Sharp Aquos KIRA) | Bash | 4-phase: bootloader/firmware → non-slot → dynamic → userdata/finalize |
 | `flash_e11.sh` | E11 | Bash | Auto Official/Jenkins detect; variants MC6/PDC6/PEC6/PHC6/PKC6; fastbootd; slot selection |
 | `flash_e10.sh` | E10 | Bash | Multi-variant (MC5, PDC5, PEC5, PHC5, PKC5, TAC5, TDC5, TEC5) |
+| `flash_e9.sh` | E9 | Bash | Multi-variant (MC4, PDC4, PEC4, PHC4, PKC4, TAC4, TDC4, TEC4, NAZE 17-OS) |
 
 ## Dependencies
 

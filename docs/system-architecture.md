@@ -22,7 +22,7 @@ flowchart TB
     subgraph Profiles["Profile Layer"]
         G6["g6_ramba.py<br/>(16–18 steps)"]
         OM["other_model.py<br/>(flexible partitions)"]
-        SD["script_device.py<br/>(PS11 / E11 / E10)"]
+        SD["script_device.py<br/>(PS11 / E11 / E10 / E9)"]
     end
 
     subgraph External["External"]

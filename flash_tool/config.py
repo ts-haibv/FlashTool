@@ -150,6 +150,6 @@ def get_file_size_mb(filepath: str) -> float:
 
 # ── App Info ────────────────────────────────────────────────────────────────
 APP_NAME = "FlashTool"
-APP_VERSION = "1.2.9"
+APP_VERSION = "1.3.0"
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 750

@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 APP_NAME="FlashTool"
-APP_VERSION="1.2.9"
+APP_VERSION="1.3.0"
 BUILD_DIR="$SCRIPT_DIR/dist"
 DEB_DIR="$BUILD_DIR/deb_package"
 ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
@@ -60,9 +60,17 @@ cp "$BUILD_DIR/FlashTool" "$DEB_ROOT/usr/bin/flashtool"
 chmod 755 "$DEB_ROOT/usr/bin/flashtool"
 
 # Copy bundled assets (e.g. vbmeta_verification_disabled.img)
+mkdir -p "$DEB_ROOT/usr/share/$APP_NAME/assets/e9"
+mkdir -p "$DEB_ROOT/usr/share/$APP_NAME/assets/e10"
 mkdir -p "$DEB_ROOT/usr/share/$APP_NAME/assets/e11"
 mkdir -p "$DEB_ROOT/usr/share/$APP_NAME/assets/ps10"
 mkdir -p "$DEB_ROOT/usr/share/$APP_NAME/assets/ps11"
+if [ -d "$SCRIPT_DIR/assets/e9" ]; then
+    cp -r "$SCRIPT_DIR/assets/e9/." "$DEB_ROOT/usr/share/$APP_NAME/assets/e9/"
+fi
+if [ -d "$SCRIPT_DIR/assets/e10" ]; then
+    cp -r "$SCRIPT_DIR/assets/e10/." "$DEB_ROOT/usr/share/$APP_NAME/assets/e10/"
+fi
 if [ -d "$SCRIPT_DIR/assets/e11" ]; then
     cp -r "$SCRIPT_DIR/assets/e11/." "$DEB_ROOT/usr/share/$APP_NAME/assets/e11/"
 fi

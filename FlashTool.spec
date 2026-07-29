@@ -16,6 +16,7 @@ a = Analysis(
         ('flash_ps11.sh', '.'),
         ('flash_e11.sh', '.'),
         ('flash_e10.sh', '.'),
+        ('flash_e9.sh', '.'),
     ],
     hiddenimports=[
         'customtkinter',

@@ -1,4 +1,4 @@
-"""Auto-detection heuristics for firmware flash device type (PS11 / E11 / E10)."""
+"""Auto-detection heuristics for firmware flash device type (PS11 / E11 / E10 / E9)."""
 
 import os
 import glob
@@ -22,13 +22,17 @@ DEVICE_SIGNATURES = {
         "variant_dirs": ["MC5", "PDC5", "PEC5", "PHC5", "PKC5", "TAC5", "TDC5", "TEC5"],
         "file_patterns": ["system_ext-lyle.img", "init_boot.img", "pvmfw.img"],
     },
+    "E9": {
+        "variant_dirs": ["MC4", "PDC4", "PEC4", "PHC4", "PKC4", "TAC4", "TDC4", "TEC4"],
+        "file_patterns": ["system_ext-naze.img", "init_boot.img", "pvmfw.img"],
+    },
 }
 
 
 def detect_device(rom_path: str) -> str | None:
     """Auto-detect device type from ROM folder contents.
 
-    Returns 'PS11', 'E11', 'E10', or None if no match.
+    Returns 'PS11', 'E11', 'E10', 'E9', or None if no match.
 
     Scoring:
       - Variant directory present: +10

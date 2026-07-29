@@ -122,22 +122,56 @@ resolve_sku_file() {
     "$SCRIPT_DIR/$BASE_MODEL/$base_name"
 }
 
+# Flash partition safely; gracefully skip if partition does not exist on device
+flash_partition_safe() {
+  local partition="$1" image="$2" is_raw="${3:-0}"
+  [[ -n "$image" && -f "$image" ]] || return 0
+
+  if (( is_raw )); then
+    echo "+ fastboot ${SERIAL:+-s $SERIAL }flash $partition $image"
+  else
+    echo "+ fastboot ${SERIAL:+-s $SERIAL }-S $FASTBOOT_CHUNK_SIZE flash $partition $image"
+  fi
+  (( DRY_RUN )) && return 0
+
+  local tmp_err; tmp_err="$(mktemp /tmp/fb_err_XXXXXX)"
+  local cmd_func="fastboot_cmd"
+  (( is_raw )) && cmd_func="fastboot_cmd_raw"
+
+  if $cmd_func flash "$partition" "$image" 2>"$tmp_err"; then
+    rm -f "$tmp_err"
+    return 0
+  fi
+
+  local err_out; err_out="$(cat "$tmp_err")"
+  rm -f "$tmp_err"
+
+  # Print stderr output
+  echo "$err_out" >&2
+
+  # Check if failure is due to missing/unsupported partition on target device
+  if echo "$err_out" | grep -iqE "(no such partition|partition.*size: 0|invalid partition|partition table|unknown partition)"; then
+    echo "⚠️  [SKIP] Partition '$partition' not found or unsupported on target device. Skipping."
+    return 0
+  fi
+
+  # Otherwise, retry
+  retry $cmd_func flash "$partition" "$image"
+}
+
 flash_if_exists() {
   local partition="$1" image="$2"
-  [[ -f "$image" ]] || return 0
-  run_fastboot flash "$partition" "$image"
+  flash_partition_safe "$partition" "$image" 0
 }
 
 flash_slot_if_exists() {
   local partition="$1" image="$2"
-  [[ -f "$image" ]] || return 0
-  run_fastboot flash "${partition}_${TARGET_SLOT}" "$image"
+  flash_partition_safe "${partition}_${TARGET_SLOT}" "$image" 0
 }
 
 flash_slot_raw() {
   local partition="$1" image="$2"
-  [[ -f "$image" ]] || return 0
-  run_fastboot_raw flash "${partition}_${TARGET_SLOT}" "$image"
+  flash_partition_safe "${partition}_${TARGET_SLOT}" "$image" 1
 }
 
 # Flash a dynamic logical partition to slot_a; recreate if missing from partition table.
