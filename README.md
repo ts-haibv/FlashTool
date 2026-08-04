@@ -1,19 +1,21 @@
-# ⚡ FlashTool — G6 ROM Flash Tool
+# ⚡ FlashTool — G6-family ROM Flash Tool
 
-Cross-platform desktop application for flashing ROM images onto G6 (RAMBA) devices.  
+Cross-platform desktop application for flashing ROM images onto G6-family (G6, X6, X5, X5P) devices.
 Supports **Windows** and **Ubuntu/Linux**.
 
 ---
 
 ## Features
 
-- 🔍 **Auto-detect ROM images** — scans folder for `vbmeta*.img`, `system.img`, `product*.img`, `system_ext*.img`
-- 📂 **Manual file selection** — override any auto-detected image with manual browse
+- 🔍 **Auto-resolve ROM images** — selects the required G6-family images directly from the firmware folder
 - 📡 **Device auto-detection** — real-time polling for ADB/Fastboot device status
-- 🚀 **13-step flash process** — unlock → flash → erase → reboot
+- 🧭 **Bootloader actions** — reboot an authorized ADB device, check unlock status, and run the unlock command from separate buttons
+- 🧰 **Skip Setup Wizard** — mark an ADB device as provisioned and reboot it from the footer action bar
+- 🚀 **15-step G6-family flash process** — unlock → flash → erase → reboot
 - 📊 **Real-time progress** — per-step progress bars with sparse-image tracking
 - 📋 **Console output** — live command output log
 - 🎨 **Modern dark UI** — built with CustomTkinter
+- 🖱️ **Focused list scrolling** — mouse wheel follows the active configuration or flash-step list
 
 ---
 
@@ -45,11 +47,21 @@ pip install -r requirements.txt
 python main.py
 ```
 
+### First-time bootloader setup
+
+Before the first unlock, boot the phone into Android and connect it over USB. If Developer options is hidden, open **Settings → About phone** and tap **Build number** seven times. Then enable **USB debugging** and **OEM unlocking** in Developer options.
+
+When ADB is connected, FlashTool reads `ro.boot.flash.locked` and `ro.boot.verifiedbootstate` to show whether the bootloader is already unlocked. Click **Reboot to bootloader** when ready. Fastboot status is checked again automatically; if it is locked, click **Run fastboot flashing unlock** and confirm the unlock on the device; if it is already unlocked, the app disables that action and tells you that you can continue flashing. The OEM toggle and final bootloader confirmation remain manual device actions by design; unlocking wipes user data.
+
+After Android boots, the **Skip Setup Wizard** action in the footer can mark the device as provisioned through ADB and reboot it. Use it only when you intentionally want to bypass the first-run setup screens.
+
+See the official Android guidance for [Developer options](https://developer.android.com/studio/debug/dev-options.html) and [bootloader unlocking](https://source.android.com/docs/core/architecture/bootloader/locking_unlocking).
+
 ---
 
 ## ROM Folder Structure
 
-Place your ROM files in a folder with this layout:
+Place your G6/X6/X5/X5P ROM files in a folder with this layout:
 ```
 BIN_RAMBA1_A4020Jenkins570_2020/
 ├── system.img
@@ -59,11 +71,24 @@ BIN_RAMBA1_A4020Jenkins570_2020/
 │   └── product-eed3.img         (or product*.img)
 ```
 
-The app auto-detects images by pattern. If multiple matches exist, you can pick from the dropdown or browse manually.
+The app detects X5/X5P packages from `system_ext-sx5.img` and
+`system_ext-sx5p.img`. If the ROM contains regional variant directories such as
+`ML2`, select the desired variant in the **Variant** field; its matching
+`product-*` and `vbmeta_system-*` images are then used for flashing.
+
+Example X5P layout:
+```
+BIN_SECBOOT_SX5P_17_A7300_2026/
+├── system.img
+├── system_ext-sx5p.img
+└── ML2/
+    ├── product-ml2.img
+    └── vbmeta_system-ml2.img
+```
 
 ---
 
-## Flash Steps (G6 RAMBA)
+## Flash Steps (G6 / X6 / X5 / X5P)
 
 | # | Step | Command |
 |---|------|---------|
@@ -104,4 +129,4 @@ This project uses [GitHub Actions](.github/workflows/release.yml) to automatical
 
 ## License
 
-Internal tool — G6 device flashing support.
+Internal tool — G6-family device flashing support.

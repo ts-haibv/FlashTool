@@ -7,7 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "⚡ FlashTool — G6 ROM Flash Tool"
+echo "⚡ FlashTool — G6-family ROM Flash Tool"
 echo "─────────────────────────────────"
 
 # Check Python

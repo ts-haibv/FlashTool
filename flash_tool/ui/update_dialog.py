@@ -8,7 +8,7 @@ import webbrowser
 import customtkinter as ctk
 from tkinter import messagebox
 
-from flash_tool.ui.theme import COLORS, FONTS, SPACING
+from flash_tool.ui.theme import COLORS, FONTS, RADIUS, SPACING
 from flash_tool.updater import (
     check_for_updates,
     download_file_with_progress,
@@ -113,7 +113,7 @@ class UpdateDialog(ctk.CTkToplevel):
     def _build_checking_ui(self):
         title = ctk.CTkLabel(
             self.content_frame,
-            text="🔍 Checking for Updates",
+            text="Checking for updates",
             font=FONTS["heading_lg"],
             text_color=COLORS["text_primary"],
             anchor="w",
@@ -153,7 +153,7 @@ class UpdateDialog(ctk.CTkToplevel):
             text_color=COLORS["text_primary"],
             width=100,
             height=36,
-            corner_radius=6,
+            corner_radius=RADIUS["sm"],
             command=self.on_close,
         )
         cancel_btn.pack(side="right")
@@ -183,7 +183,7 @@ class UpdateDialog(ctk.CTkToplevel):
     def _build_up_to_date_ui(self):
         title = ctk.CTkLabel(
             self.content_frame,
-            text="✅ You're Up to Date!",
+            text="You're up to date",
             font=FONTS["heading_lg"],
             text_color=COLORS["accent_green"],
             anchor="w",
@@ -198,11 +198,11 @@ class UpdateDialog(ctk.CTkToplevel):
             text="Close",
             font=FONTS["heading_sm"],
             fg_color=COLORS["accent_blue"],
-            hover_color="#4a70d4",
-            text_color="#ffffff",
+            hover_color=COLORS["primary_hover"],
+            text_color=COLORS["on_accent"],
             width=100,
             height=36,
-            corner_radius=6,
+            corner_radius=RADIUS["sm"],
             command=self.on_close,
         )
         close_btn.pack(side="right")
@@ -225,7 +225,7 @@ class UpdateDialog(ctk.CTkToplevel):
 
         title = ctk.CTkLabel(
             self.content_frame,
-            text=f"🚀 New Update Available: {latest_version}",
+            text=f"New update available: {latest_version}",
             font=FONTS["heading_lg"],
             text_color=COLORS["accent_green"],
             anchor="w",
@@ -260,11 +260,11 @@ class UpdateDialog(ctk.CTkToplevel):
             text=update_text,
             font=FONTS["heading_sm"],
             fg_color=COLORS["accent_blue"],
-            hover_color="#4a70d4",
-            text_color="#ffffff",
+            hover_color=COLORS["primary_hover"],
+            text_color=COLORS["on_accent"],
             width=140,
             height=36,
-            corner_radius=6,
+            corner_radius=RADIUS["sm"],
             command=update_cmd,
         )
         self.action_btn.pack(side="right", padx=(12, 0))
@@ -278,7 +278,7 @@ class UpdateDialog(ctk.CTkToplevel):
             text_color=COLORS["text_primary"],
             width=100,
             height=36,
-            corner_radius=6,
+            corner_radius=RADIUS["sm"],
             command=self.on_close,
         )
         later_btn.pack(side="right")
@@ -304,7 +304,7 @@ class UpdateDialog(ctk.CTkToplevel):
             wrap="word",
             activate_scrollbars=True,
             scrollbar_button_color=COLORS["scrollbar_fg"],
-            scrollbar_button_hover_color=COLORS["bg_hover"],
+            scrollbar_button_hover_color=COLORS["scrollbar_hover"],
         )
         notes_box.pack(fill="both", expand=True, pady=(0, 20))
         notes_box.insert("1.0", self.update_info.get("release_notes", ""))
@@ -314,7 +314,7 @@ class UpdateDialog(ctk.CTkToplevel):
     def _build_downloading_ui(self):
         title = ctk.CTkLabel(
             self.content_frame,
-            text="🔄 Downloading Update",
+            text="Downloading update",
             font=FONTS["heading_lg"],
             text_color=COLORS["accent_blue"],
             anchor="w",
@@ -363,7 +363,7 @@ class UpdateDialog(ctk.CTkToplevel):
             text_color=COLORS["text_primary"],
             width=100,
             height=36,
-            corner_radius=6,
+            corner_radius=RADIUS["sm"],
             command=self.on_cancel_download,
         )
         cancel_btn.pack(side="right")
@@ -477,7 +477,7 @@ class UpdateDialog(ctk.CTkToplevel):
     def _build_success_ui(self):
         title = ctk.CTkLabel(
             self.content_frame,
-            text="✅ Update Completed!",
+            text="Update completed",
             font=FONTS["heading_lg"],
             text_color=COLORS["accent_green"],
             anchor="w",
@@ -492,11 +492,11 @@ class UpdateDialog(ctk.CTkToplevel):
             text="Restart Now",
             font=FONTS["heading_sm"],
             fg_color=COLORS["accent_green"],
-            hover_color="#3cb36b",
+            hover_color=COLORS["success_hover"],
             text_color="#101117",
             width=130,
             height=36,
-            corner_radius=6,
+            corner_radius=RADIUS["sm"],
             command=self.on_restart,
         )
         restart_btn.pack(side="right")
@@ -520,7 +520,7 @@ class UpdateDialog(ctk.CTkToplevel):
     def _build_error_ui(self):
         title = ctk.CTkLabel(
             self.content_frame,
-            text="❌ Update Failed",
+            text="Update failed",
             font=FONTS["heading_lg"],
             text_color=COLORS["accent_red"],
             anchor="w",
@@ -539,7 +539,7 @@ class UpdateDialog(ctk.CTkToplevel):
             text_color=COLORS["text_primary"],
             width=100,
             height=36,
-            corner_radius=6,
+            corner_radius=RADIUS["sm"],
             command=self.on_close,
         )
         close_btn.pack(side="right")
@@ -550,11 +550,11 @@ class UpdateDialog(ctk.CTkToplevel):
                 text="Download Manually",
                 font=FONTS["heading_sm"],
                 fg_color=COLORS["accent_blue"],
-                hover_color="#4a70d4",
-                text_color="#ffffff",
+                hover_color=COLORS["primary_hover"],
+                text_color=COLORS["on_accent"],
                 width=160,
                 height=36,
-                corner_radius=6,
+                corner_radius=RADIUS["sm"],
                 command=self.on_open_browser,
             )
             fallback_btn.pack(side="right", padx=(0, 12))

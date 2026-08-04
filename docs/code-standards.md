@@ -19,7 +19,7 @@
 | Constants | UPPER_SNAKE_CASE | `APP_NAME`, `ADB_PATH`, `IMAGE_PATTERNS` |
 | Private helpers | leading underscore | `_run_cmd`, `_build_command`, `_handle_unlock_step` |
 | Type aliases | PascalCase | `DeviceState = Literal["fastboot", "adb", "disconnected"]` |
-| UI StringVars | snake_case + `_var` suffix | `skip_suw_var`, `current_model` |
+| UI StringVars | snake_case + `_var` suffix | `current_model`, `rom_type_var` |
 
 ## Python Conventions
 

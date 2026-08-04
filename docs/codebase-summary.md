@@ -5,17 +5,17 @@
 | File | Lines | Purpose |
 |------|-------|---------|
 | `main.py` | 26 | Entry point; sets customtkinter theme and launches `MainWindow` |
-| `flash_tool/config.py` | 139 | Platform detection, binary path discovery, ROM folder scanning, app metadata |
+| `flash_tool/config.py` | 139 | Platform detection, binary path discovery, G6-family ROM folder scanning, app metadata |
 | `flash_tool/updater.py` | 232 | App self-update manager: queries GitHub API, chunk download stream, hot swap executables |
-| `flash_tool/device_manager.py` | 128 | ADB/Fastboot device detection, state polling, wait helpers, unlock check |
+| `flash_tool/device_manager.py` | — | ADB/Fastboot detection, unlock-status parsing from fastboot and Android properties, state polling, wait helpers, targeted reboot and unlock |
 | `flash_tool/flash_worker.py` | 419 | Background thread worker: step execution, sparse progress parsing, script phase tracking |
-| `flash_tool/ui/main_window.py` | 1399 | Main CTk window: header, sidebar, step list, log panel, footer, device polling |
-| `flash_tool/ui/update_dialog.py` | 557 | Modern CTk software update dialog with download progress bars and restart buttons |
+| `flash_tool/ui/main_window.py` | — | Main CTk window: bootloader actions, ROM/profile summary, step list, log panel, footer, device polling |
+| `flash_tool/ui/scrolling.py` | 162 | Focused mouse-wheel routing for nested CustomTkinter scroll areas |
+| `flash_tool/ui/update_dialog.py` | 584 | Modern CTk software update dialog with download progress bars and restart buttons |
 | `flash_tool/ui/step_widget.py` | 130 | Card widget per flash step (id, name, status, progress bar, elapsed time) |
 | `flash_tool/ui/log_panel.py` | 80 | Scrollable console output textbox with auto-scroll and clear |
 | `flash_tool/ui/theme.py` | 93 | Dark theme color palette, fonts, spacing constants, status config mapping |
-| `flash_tool/profiles/g6_ramba.py` | 311 | G6 RAMBA profile builder: 16–18 step sequence |
-| `flash_tool/profiles/other_model.py` | 344 | Generic device profile: flexible partitions, fastbootd, region variants |
+| `flash_tool/profiles/g6_ramba.py` | 311 | G6/X6/X5/X5P shared profile builder plus standalone Setup Wizard bypass steps |
 | `flash_tool/profiles/script_device.py` | 88 | Script-backed profile builder (PS11, E11, E10, E9) with visual phase steps |
 | `flash_ps11.sh` | 1246 | PS11 flashing script: 4-phase Qualcomm Snapdragon flash |
 | `flash_e11.sh` | 504 | E11 flashing script: auto ROM detect, fastbootd support |
@@ -44,10 +44,11 @@ flash_tool/
 ├── flash_worker.py        # Background thread executor
 ├── profiles/              # Flash step generators per device
 │   ├── g6_ramba.py
-│   ├── other_model.py
 │   └── script_device.py
 └── ui/                    # CustomTkinter widgets
     ├── main_window.py
+    ├── message_dialog.py  # Theme-consistent info/error dialogs
+    ├── scrolling.py        # Focused/nested mouse-wheel routing
     ├── update_dialog.py   # Software update dialog panel
     ├── step_widget.py
     ├── log_panel.py

@@ -49,24 +49,15 @@ FASTBOOT_PATH = find_binary("fastboot") or "fastboot"
 
 # ── File Pattern Detection ──────────────────────────────────────────────────
 
-# Mapping of partition name → glob pattern(s) to search for in ROM folder
+# G6-family partition patterns used for automatic image resolution.
 IMAGE_PATTERNS = {
     "super": ["super.img"],
-    "boot": ["boot.img"],
-    "dtbo": ["dtbo.img"],
-    "init_boot": ["init_boot.img"],
     "vbmeta": ["vbmeta.img"],
-    "recovery": ["recovery.img", "recovery*.img"],
     "system": ["system.img"],
     "system_ext": ["system_ext.img", "system_ext-*.img", "system_ext*.img"],
-    "vendor": ["vendor.img", "vendor-*.img"],
     "product": ["product.img"],                              # base root only
     "product_region": ["product-*.img", "product*.img"],    # region subdirs
-    "userdata": ["userdata.img", "userdata-*.img", "userdata*.img"],
     "vbmeta_system": ["vbmeta_system.img", "vbmeta_system-*.img", "vbmeta_system*.img"],
-    "modem": ["NON-HLOS.bin", "modem.img", "modem*.img"],
-    "abl": ["abl.elf", "abl*.img"],
-    "tz": ["tz.mbn", "tz*.img"],
 }
 
 
@@ -82,12 +73,12 @@ def scan_rom_folder(rom_path: str) -> dict[str, list[str]]:
     
     Rule:
       - "product" (base): only searched in the ROOT dir (no subdirs).
-      - "product_region", "userdata", "vbmeta_system", "modem", "abl", "tz": 
+      - "product_region" and "vbmeta_system":
         searched in subdirs only.
       - Everything else: root + subdirs.
     """
     ROOT_ONLY = {"product"}
-    SUBDIR_ONLY = {"product_region", "userdata", "vbmeta_system", "modem", "abl", "tz"}
+    SUBDIR_ONLY = {"product_region", "vbmeta_system"}
 
     results: dict[str, list[str]] = {}
 
@@ -112,18 +103,6 @@ def scan_rom_folder(rom_path: str) -> dict[str, list[str]]:
     return results
 
 
-def scan_regions(rom_path: str) -> list[str]:
-    """Scan immediate subdirectories of a ROM folder to detect regions (e.g. MN3, PDN3)."""
-    regions = []
-    if not os.path.exists(rom_path):
-        return regions
-    for entry in os.listdir(rom_path):
-        full_path = os.path.join(rom_path, entry)
-        if os.path.isdir(full_path) and not entry.startswith("."):
-            regions.append(entry)
-    return sorted(regions)
-
-
 def get_clean_env() -> dict[str, str]:
     """Get a copy of the environment with PyInstaller's library search path overrides removed or restored."""
     env = os.environ.copy()
@@ -140,16 +119,8 @@ def get_clean_env() -> dict[str, str]:
     return env
 
 
-def get_file_size_mb(filepath: str) -> float:
-    """Return file size in MB."""
-    try:
-        return os.path.getsize(filepath) / (1024 * 1024)
-    except OSError:
-        return 0.0
-
-
 # ── App Info ────────────────────────────────────────────────────────────────
 APP_NAME = "FlashTool"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 750

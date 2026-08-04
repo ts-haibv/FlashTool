@@ -26,7 +26,6 @@ a = Analysis(
         'flash_tool.flash_worker',
         'flash_tool.profiles',
         'flash_tool.profiles.g6_ramba',
-        'flash_tool.profiles.other_model',
         'flash_tool.profiles.script_device',
         'flash_tool.profiles.auto_detect',
         'flash_tool.ui',

@@ -8,6 +8,7 @@ flowchart TB
         MW["MainWindow<br/>(layout + event loop)"]
         SW["StepWidget<br/>(step cards)"]
         LP["LogPanel<br/>(console output)"]
+        WS["WheelScrollManager<br/>(focused list scrolling)"]
         TH["theme.py<br/>(colors, fonts, spacing)"]
         UD["UpdateDialog<br/>(update panel)"]
     end
@@ -20,8 +21,7 @@ flowchart TB
     end
 
     subgraph Profiles["Profile Layer"]
-        G6["g6_ramba.py<br/>(16–18 steps)"]
-        OM["other_model.py<br/>(flexible partitions)"]
+        G6["g6_ramba.py<br/>(G6 / X6 / X5 / X5P)"]
         SD["script_device.py<br/>(PS11 / E11 / E10 / E9)"]
     end
 
@@ -33,9 +33,10 @@ flowchart TB
         GH["GitHub Releases API"]
     end
 
-    MW -->|builds steps| G6 & OM & SD
+    MW -->|builds steps| G6 & SD
+    MW -->|registers scroll areas| WS
     MW -->|spawns| FW
-    MW -->|polls 2s| DM
+    MW -->|polls 3s| DM
     MW -->|silently queries| UP
     MW -->|opens| UD
     UD -->|controls update| UP
@@ -44,7 +45,7 @@ flowchart TB
     DM -->|queries| ADB & FB
     CF -->|scans| ROM
     CF -->|paths| DM & FW
-    G6 & OM & SD -->|FlashStep list| FW
+    G6 & SD -->|FlashStep list| FW
     UP -->|downloads updates| GH
 ```
 
@@ -59,10 +60,7 @@ User selects folder
 config.scan_rom_folder(path)  ──►  dict[str, list[str]]
     │                                (partition → matched files)
     ▼
-MainWindow populates image dropdowns
-    │
-    ▼
-User selects or confirms each image
+MainWindow resolves the first matching G6-family image per partition
     │
     ▼
 MainWindow.selected_images  ──►  dict[str, str]
@@ -95,7 +93,7 @@ MainWindow updates StepWidget + LogPanel via callbacks
 ### 3. Device Polling Flow
 
 ```
-MainWindow._poll_device() ──►  after(2000ms)
+MainWindow._poll_device() ──►  after(3000ms)
     │
     ▼
 device_manager.get_device_state()
@@ -103,8 +101,13 @@ device_manager.get_device_state()
     ▼
 (fastboot devices) ──► (adb devices) ──► disconnected
     │
-    ▼
-Update header dot color + label
+    ├── adb → bootloader helper can run adb reboot bootloader
+    ├── fastboot → query `getvar unlocked`, then enable unlock only when needed
+    ├── adb → query `ro.boot.flash.locked` + `ro.boot.verifiedbootstate`
+    └── adb → footer shortcut marks Setup Wizard provisioning settings
+         │
+         ▼
+Update header status + Bootloader card
 ```
 
 ## Component Interactions
@@ -114,7 +117,7 @@ Update header dot color + label
 | `MainWindow` | Layout, event wiring, state aggregation, profile switching | `StepWidget`, `LogPanel`, `FlashWorker`, `config`, `device_manager` |
 | `FlashWorker` | Sequential step execution in a background thread | `device_manager`, `config` (paths), profiles (step list) |
 | `StepWidget` | Visual representation of one `FlashStep` | `theme.py` only |
-| `device_manager` | Pure functions for adb/fastboot queries | `config` (binary paths) |
+| `device_manager` | Pure functions for adb/fastboot queries, unlock-status parsing, targeted bootloader reboot, and unlock | `config` (binary paths) |
 | `config` | Platform utilities and ROM scanning | None (static functions) |
 | Profiles | Step list generators | `FlashStep` dataclass |
 
@@ -124,14 +127,16 @@ Update header dot color + label
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `current_model` | `StringVar` | Selected device model |
+| `current_model` | `StringVar` | Auto-resolved device/profile name |
 | `rom_path` | `str` | Absolute path to ROM folder |
-| `detected_images` | `dict[str, list[str]]` | All matches from `scan_rom_folder` |
-| `selected_images` | `dict[str, str]` | Final chosen file per partition |
-| `skip_suw_var` | `BooleanVar` | Append SUW-bypass steps |
+| `detected_images` | `dict[str, list[str]]` | Internal matches from `scan_rom_folder` |
+| `selected_images` | `dict[str, str]` | Automatically chosen G6-family file per partition |
 | `flash_steps` | `list[FlashStep]` | Current profile step list |
 | `worker` | `FlashWorker \| None` | Active background thread |
 | `step_widgets` | `dict[int, StepWidget]` | ID → widget mapping |
+| `device_state` / `device_serial` | `str` / `str | None` | Current connected mode and serial |
+| `unlock_status` / `unlock_status_serial` | `bool | None` / `str | None` | Cached unlock result and serial for the current device |
+| `unlock_status_mode` | `str | None` | Source mode used for the cached result: `adb` or `fastboot` |
 
 ### Worker State (FlashStep attributes)
 

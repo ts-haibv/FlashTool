@@ -4,12 +4,10 @@
 
 | Area | Status |
 |------|--------|
-| G6 RAMBA flashing | Stable — 16–18 step profile with unlock, vbmeta, partition flash, erase, reboot |
-| Generic "Other Model" flashing | Stable — flexible partition list, fastbootd, region variants |
+| G6 / X6 / X5 / X5P flashing | Stable — shared 15-step profile with automatic image resolution |
 | PS11 script-backed flashing | Stable — 4-phase visual decomposition |
 | E11 / E10 / E9 script-backed flashing | Stable — auto ROM detect, multi-variant |
 | Real-time sparse progress | Working — parsed from fastboot stdout |
-| Skip SUW post-flash | Working — marks device provisioned after reboot |
 | Cross-platform builds | Stable — PyInstaller Linux + Windows binaries, .deb package |
 | CI/CD | Stable — GitHub Actions auto-release on version tags |
 

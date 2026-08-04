@@ -3,7 +3,7 @@ REM ─────────────────────────�
 REM FlashTool — Windows launcher
 REM ────────────────────────────────────────────────────────────────────────
 echo.
-echo  ⚡ FlashTool — G6 ROM Flash Tool
+echo  ⚡ FlashTool — G6-family ROM Flash Tool
 echo  ─────────────────────────────────
 echo.
 

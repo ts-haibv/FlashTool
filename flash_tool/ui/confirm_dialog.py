@@ -1,7 +1,7 @@
 """Custom confirmation dialog matching the app theme."""
 
 import customtkinter as ctk
-from flash_tool.ui.theme import COLORS, FONTS, SPACING
+from flash_tool.ui.theme import COLORS, FONTS, RADIUS, SPACING
 
 
 class ConfirmDialog(ctk.CTkToplevel):
@@ -49,7 +49,7 @@ class ConfirmDialog(ctk.CTkToplevel):
         # 1. Title/Header label (packed at top)
         self.title_label = ctk.CTkLabel(
             self,
-            text=f"❓  {title}",
+            text=title,
             font=FONTS["heading_md"],
             text_color=COLORS["text_primary"],
             anchor="w"
@@ -66,11 +66,11 @@ class ConfirmDialog(ctk.CTkToplevel):
             text="Yes",
             font=FONTS["heading_sm"],
             fg_color=COLORS["accent_blue"],
-            hover_color="#4a70d4",
-            text_color="#ffffff",
+            hover_color=COLORS["primary_hover"],
+            text_color=COLORS["on_accent"],
             width=100,
             height=36,
-            corner_radius=6,
+            corner_radius=RADIUS["sm"],
             command=self.on_yes,
         )
         self.yes_btn.pack(side="right", padx=(12, 0))
@@ -84,7 +84,7 @@ class ConfirmDialog(ctk.CTkToplevel):
             text_color=COLORS["text_primary"],
             width=100,
             height=36,
-            corner_radius=6,
+            corner_radius=RADIUS["sm"],
             command=self.on_no,
         )
         self.no_btn.pack(side="right")
@@ -98,7 +98,7 @@ class ConfirmDialog(ctk.CTkToplevel):
             wrap="word",
             activate_scrollbars=True,
             scrollbar_button_color=COLORS["scrollbar_fg"],
-            scrollbar_button_hover_color=COLORS["bg_hover"],
+            scrollbar_button_hover_color=COLORS["scrollbar_hover"],
             border_width=0,
         )
         self.msg_box.pack(fill="both", expand=True, padx=24, pady=12)

@@ -1,7 +1,7 @@
 """Step widget — displays a single flash step with progress and timing."""
 
 import customtkinter as ctk
-from flash_tool.ui.theme import COLORS, FONTS, SPACING, STATUS_CONFIG
+from flash_tool.ui.theme import COLORS, FONTS, RADIUS, SPACING, STATUS_CONFIG
 
 
 class StepWidget(ctk.CTkFrame):
@@ -11,8 +11,10 @@ class StepWidget(ctk.CTkFrame):
         super().__init__(
             master,
             fg_color=COLORS["bg_secondary"],
-            corner_radius=8,
-            height=56,
+            border_width=1,
+            border_color=COLORS["border_subtle"],
+            corner_radius=RADIUS["md"],
+            height=60,
             **kwargs,
         )
         self.step_id = step_id
@@ -45,7 +47,7 @@ class StepWidget(ctk.CTkFrame):
         # Status + time label (right column)
         self.status_label = ctk.CTkLabel(
             self,
-            text="⏳ Pending",
+            text="○ Pending",
             font=FONTS["caption"],
             text_color=COLORS["status_pending"],
             width=120,
@@ -86,7 +88,7 @@ class StepWidget(ctk.CTkFrame):
 
         # Update elapsed time label
         if status in ("running", "waiting") and elapsed > 0:
-            self.time_label.configure(text=f"⏱ {elapsed:.1f}s")
+            self.time_label.configure(text=f"{elapsed:.1f}s")
         elif status == "success" and elapsed > 0:
             self.time_label.configure(text=f"✓ {elapsed:.1f}s", text_color=COLORS.get("accent_green", "#4caf50"))
         elif status == "failed" and elapsed > 0:
@@ -121,10 +123,11 @@ class StepWidget(ctk.CTkFrame):
             self.configure(
                 fg_color=COLORS["bg_tertiary"],
                 border_width=1,
-                border_color=COLORS["accent_blue"],
+                border_color=COLORS["focus_ring"],
             )
         else:
             self.configure(
                 fg_color=COLORS["bg_secondary"],
-                border_width=0,
+                border_width=1,
+                border_color=COLORS["border_subtle"],
             )

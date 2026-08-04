@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 APP_NAME="FlashTool"
-APP_VERSION="1.3.0"
+APP_VERSION="1.3.1"
 BUILD_DIR="$SCRIPT_DIR/dist"
 DEB_DIR="$BUILD_DIR/deb_package"
 ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
@@ -90,9 +90,9 @@ Priority: optional
 Architecture: $ARCH
 Depends: android-tools-adb, android-tools-fastboot
 Maintainer: FlashTool <flashtool@local>
-Description: G6 ROM Flash Tool
+Description: G6-family ROM Flash Tool
  Cross-platform desktop application for flashing ROM images
- onto G6 (RAMBA) devices. Features auto-detection of image files,
+ onto G6, X6, and X5 devices. Features automatic image resolution,
  real-time progress tracking, and a modern dark UI.
 Homepage: https://github.com/flashtool
 EOF
@@ -116,7 +116,7 @@ cp "$SCRIPT_DIR/assets/icon.png" "$DEB_ROOT/usr/share/pixmaps/flashtool.png"
 cat > "$DEB_ROOT/usr/share/applications/flashtool.desktop" << EOF
 [Desktop Entry]
 Name=FlashTool
-Comment=G6 ROM Flash Tool
+Comment=G6-family ROM Flash Tool
 Exec=flashtool
 Icon=/usr/share/pixmaps/flashtool.png
 Terminal=false
@@ -127,7 +127,7 @@ Keywords=flash;rom;android;fastboot;adb;
 EOF
 
 # Build .deb
-dpkg-deb --build "$DEB_ROOT" "$BUILD_DIR/$DEB_NAME.deb" 2>/dev/null
+dpkg-deb --build --root-owner-group "$DEB_ROOT" "$BUILD_DIR/$DEB_NAME.deb" 2>/dev/null
 
 DEB_SIZE=$(du -h "$BUILD_DIR/$DEB_NAME.deb" | cut -f1)
 echo "  ✅ .deb package: $BUILD_DIR/$DEB_NAME.deb ($DEB_SIZE)"
