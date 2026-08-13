@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Flash Script for Sharp Aquos KIRA (PS11) - Android 16 / A4100
+# Flash Script for Sharp Aquos KIRA (PS11) - Android 16/17
 # ==============================================================================
-# Firmware: BIN_SECBOOT_KIRA_16_A4100_2026
+# Firmware: BIN_SECBOOT_KIRA_17_A8070_2026 / Jenkins A8110
 # Device:   PS11 (Sharp Aquos KIRA)
 # SoC:      Qualcomm Snapdragon (A/B slot, UFS 4.1)
-# Android:  16 (API 36) - userdebug
-# Build:    A4100_2026
+# Android:  16/17 (API 36/37) - userdebug
 # ==============================================================================
 #
 # Usage:
@@ -33,7 +32,6 @@ set -uo pipefail
 # ──────────────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "${FLASH_FIRMWARE_DIR:-$(dirname "${BASH_SOURCE[0]}")}" && pwd)"
-SCRIPT_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KIRA_DIR="${SCRIPT_DIR}/Kira"
 
 # Colors
@@ -65,8 +63,9 @@ PRODUCT_VARIANT_DIR=""
 
 # ROM type detection
 # Official: full firmware with boot.img, bootloader, etc.
-# Jenkins: partial ROM (system/system_ext/product + pvmfw only)
+# Jenkins: partial ROM (init_boot/pvmfw + system/system_ext/product)
 ROM_TYPE=""  # "official" | "jenkins" | "" (auto-detect from boot.img)
+ROM_ANDROID_MAJOR=""
 
 # Counters
 STEP=0
@@ -127,16 +126,109 @@ detect_rom_type() {
     fi
 }
 
-# Find bundled vbmeta_verification_disabled.img for Jenkins mode.
-# Looks in: deb-installed assets dir → SCRIPT_DIR.
-find_bundled_vbmeta() {
-    local deb_dir="/usr/share/FlashTool/assets/ps11"
-    for dir in "$deb_dir" "$SCRIPT_ABS" "$SCRIPT_DIR"; do
-        for name in vbmeta_verification_disabled.img vbmeta.img; do
-            if [[ -f "$dir/$name" ]]; then
-                echo "$dir/$name" && return 0
+find_ps11_image_path() {
+    local image="$1"
+    local -a dirs=("${SCRIPT_DIR}" "${KIRA_DIR}")
+    [[ -n "${VARIANT_DIR:-}" ]] && dirs+=("${VARIANT_DIR}")
+    [[ -n "${PRODUCT_VARIANT_DIR:-}" ]] && dirs+=("${PRODUCT_VARIANT_DIR}")
+
+    local dir
+    for dir in "${dirs[@]}"; do
+        if [[ -f "${dir}/${image}" ]]; then
+            echo "${dir}/${image}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+ps11_android_major_from_vbmeta() {
+    local vbmeta_system_path="$1"
+    local fingerprint=""
+
+    if command -v strings >/dev/null 2>&1; then
+        fingerprint="$(strings -a "${vbmeta_system_path}" 2>/dev/null \
+            | grep -E -m1 '^SHARP/[^:]+:[0-9]+/' || true)"
+    fi
+
+    if [[ "${fingerprint}" =~ :([0-9]+)/ ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+# SHARP_EXTEND [FlashTool] [PS11-JENKINS-BOOT] Add Start
+ps11_fingerprint_from_vbmeta() {
+    local vbmeta_path="$1"
+    strings -a "${vbmeta_path}" 2>/dev/null \
+        | grep -E -m1 '^SHARP/[^:]+:[0-9]+/[^/]+' || true
+}
+
+ps11_build_id_from_fingerprint() {
+    local fingerprint="$1"
+    if [[ "${fingerprint}" =~ :[0-9]+/([^/]+)/ ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+ps11_android_major_from_fingerprint() {
+    local fingerprint="$1"
+    if [[ "${fingerprint}" =~ :([0-9]+)/ ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+ps11_is_ps11_fingerprint() {
+    local fingerprint="$1"
+    [[ "${fingerprint}" == *Kira* || "${fingerprint}" == *Aquos* || "${fingerprint}" == *SH-M35* ]]
+}
+
+ps11_jenkins_base_compatible() {
+    local jenkins_fingerprint="$1"
+    local base_fingerprint="$2"
+    local jenkins_major base_major jenkins_build base_build
+
+    jenkins_major="$(ps11_android_major_from_fingerprint "${jenkins_fingerprint}" || true)"
+    base_major="$(ps11_android_major_from_fingerprint "${base_fingerprint}" || true)"
+    jenkins_build="$(ps11_build_id_from_fingerprint "${jenkins_fingerprint}" || true)"
+    base_build="$(ps11_build_id_from_fingerprint "${base_fingerprint}" || true)"
+
+    [[ -n "${jenkins_major}" && "${jenkins_major}" == "${base_major}" \
+        && -n "${jenkins_build}" && -n "${base_build}" ]] || return 1
+    ps11_is_ps11_fingerprint "${jenkins_fingerprint}" \
+        && ps11_is_ps11_fingerprint "${base_fingerprint}"
+}
+# SHARP_EXTEND [FlashTool] [PS11-JENKINS-BOOT] Add End
+
+is_avb_image() {
+    local image_path="$1"
+    [[ "$(head -c 4 "${image_path}" 2>/dev/null || true)" == "AVB0" ]]
+}
+
+# A Jenkins package is partial. Its normal path must preserve the root vbmeta
+# already installed with the base Official ROM. A generic bundled vbmeta is
+# deliberately not a valid fallback for this path.
+find_jenkins_local_disabled_vbmeta() {
+    local expected_major="${1:-}"
+    local -a dirs=("${SCRIPT_DIR}" "${KIRA_DIR}" "${VARIANT_DIR:-}" "${PRODUCT_VARIANT_DIR:-}")
+    local dir candidate fingerprint actual_major
+    for dir in "${dirs[@]}"; do
+        [[ -n "${dir}" ]] || continue
+        candidate="${dir}/vbmeta_verification_disabled.img"
+        if [[ -f "${candidate}" ]] && is_avb_image "${candidate}"; then
+            fingerprint="$(ps11_fingerprint_from_vbmeta "${candidate}")"
+            actual_major="$(ps11_android_major_from_fingerprint "${fingerprint}" || true)"
+            if [[ -n "${expected_major}" && "${actual_major}" == "${expected_major}" ]] \
+                && ps11_is_ps11_fingerprint "${fingerprint}"; then
+                echo "${candidate}"
+                return 0
             fi
-        done
+        fi
     done
     echo ""
 }
@@ -224,11 +316,113 @@ device_in_adb() {
     fi
 }
 
+# SHARP_EXTEND [FlashTool] [PS11-JENKINS-BOOT] Add Start
+adb_getprop() {
+    local property="$1"
+    local -a adb_cmd=(adb)
+    [[ -n "${DEVICE_SERIAL}" ]] && adb_cmd+=(-s "${DEVICE_SERIAL}")
+    timeout 10 "${adb_cmd[@]}" shell getprop "${property}" 2>/dev/null \
+        | tr -d '\r' | sed -n '1p'
+}
+
+validate_jenkins_base_compatibility() {
+    local jenkins_fingerprint="$1"
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        log_info "DRY-RUN: skipping Jenkins base build compatibility check"
+        return 0
+    fi
+
+    if ! device_in_adb; then
+        log_fatal "Cannot verify Jenkins base build. Boot the existing ROM and connect via ADB before flashing Jenkins A8110."
+    fi
+
+    local base_fingerprint
+    base_fingerprint="$(adb_getprop ro.build.fingerprint)"
+    if [[ -z "${base_fingerprint}" ]]; then
+        log_fatal "Unable to read ro.build.fingerprint from the current Android base; refusing Jenkins partial flash."
+    fi
+
+    if ! ps11_jenkins_base_compatible "${jenkins_fingerprint}" "${base_fingerprint}"; then
+        local expected_major actual_major
+        expected_major="$(ps11_android_major_from_fingerprint "${jenkins_fingerprint}" || echo unknown)"
+        actual_major="$(ps11_android_major_from_fingerprint "${base_fingerprint}" || echo unknown)"
+        log_fatal "Jenkins base mismatch: ROM requires PS11 Android ${expected_major}, current device is PS11 Android ${actual_major}. Jenkins is partial and needs the existing PS11 boot/vendor_boot base."
+    fi
+
+    local expected_build actual_build
+    expected_build="$(ps11_build_id_from_fingerprint "${jenkins_fingerprint}" || echo unknown)"
+    actual_build="$(ps11_build_id_from_fingerprint "${base_fingerprint}" || echo unknown)"
+    if [[ "${expected_build}" != "${actual_build}" ]]; then
+        log_warn "Jenkins build ${expected_build} differs from base ${actual_build}; retaining base boot/vendor_boot and root vbmeta."
+    else
+        log_success "Jenkins base compatibility confirmed: ${actual_build}"
+    fi
+}
+
+wait_for_adb_device() {
+    local timeout_seconds="${1:-180}"
+    local count=0
+
+    log_info "Waiting for Android/ADB after Jenkins flash (timeout: ${timeout_seconds}s)..."
+    while [[ ${count} -lt ${timeout_seconds} ]]; do
+        if device_in_adb; then
+            log_success "Android device detected over ADB"
+            return 0
+        fi
+        sleep 1
+        count=$((count + 1))
+    done
+    return 1
+}
+
+fastboot_getvar_value() {
+    local variable="$1"
+    local -a fastboot_cmd=("${FASTBOOT}")
+    [[ -n "${DEVICE_SERIAL}" ]] && fastboot_cmd+=(-s "${DEVICE_SERIAL}")
+    timeout 5 "${fastboot_cmd[@]}" getvar "${variable}" 2>&1 \
+        | awk -F': ' -v key="${variable}" '$0 ~ key ":" {print $2; exit}'
+}
+
+verify_jenkins_boot() {
+    local jenkins_fingerprint="$1"
+    local boot_timeout_seconds="${2:-180}"
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        log_info "DRY-RUN: skipping post-flash Android boot verification"
+        return 0
+    fi
+
+    if wait_for_adb_device "${boot_timeout_seconds}"; then
+        local booted_fingerprint
+        booted_fingerprint="$(adb_getprop ro.build.fingerprint)"
+        if ps11_jenkins_base_compatible "${jenkins_fingerprint}" "${booted_fingerprint}"; then
+            log_success "Jenkins Android build booted successfully"
+            return 0
+        fi
+        log_error "Android booted with an unexpected fingerprint: ${booted_fingerprint:-unknown}"
+        return 1
+    fi
+
+    if device_in_fastboot; then
+        log_error "Device returned to bootloader after Jenkins flash; Android did not boot."
+        log_info "Current slot: $(fastboot_getvar_value current-slot)"
+        log_info "Slot A success: $(fastboot_getvar_value slot-successful:a)"
+        return 1
+    fi
+
+    log_error "Device did not appear in ADB after Jenkins flash"
+    return 1
+}
+# SHARP_EXTEND [FlashTool] [PS11-JENKINS-BOOT] Add End
+
 device_in_fastbootd() {
     if [[ "${DRY_RUN}" == true ]]; then return 1; fi
     local -a fb_cmd=()
     [[ "${USE_SUDO}" == true ]] && fb_cmd+=(sudo)
-    fb_cmd+=(fastboot)
+    # SHARP_EXTEND [FlashTool] [PS11-FASTBOOTD] Mod Start
+    fb_cmd+=("${FASTBOOT}")
+    # SHARP_EXTEND [FlashTool] [PS11-FASTBOOTD] Mod End
     [[ -n "${DEVICE_SERIAL}" ]] && fb_cmd+=(-s "${DEVICE_SERIAL}")
     timeout 5 "${fb_cmd[@]}" getvar is-userspace 2>&1 | grep -q "is-userspace: yes"
 }
@@ -278,7 +472,22 @@ enter_fastbootd() {
         return 0
     fi
     log_info "Rebooting to fastbootd..."
-    fb_exec reboot fastboot
+    # SHARP_EXTEND [FlashTool] [PS11-FASTBOOTD] Add Start
+    local transition_timeout=20
+    local -a reboot_cmd=()
+    [[ "${USE_SUDO}" == true ]] && reboot_cmd+=(sudo)
+    reboot_cmd+=(timeout "${transition_timeout}" "${FASTBOOT}")
+    [[ -n "${DEVICE_SERIAL}" ]] && reboot_cmd+=(-s "${DEVICE_SERIAL}")
+    reboot_cmd+=(reboot fastboot)
+
+    local reboot_exit=0
+    "${reboot_cmd[@]}" || reboot_exit=$?
+    if [[ ${reboot_exit} -eq 124 ]]; then
+        log_info "fastboot disconnected during fastbootd transition; verifying userspace mode..."
+    elif [[ ${reboot_exit} -ne 0 ]]; then
+        log_fatal "Could not request fastbootd transition (exit ${reboot_exit})"
+    fi
+    # SHARP_EXTEND [FlashTool] [PS11-FASTBOOTD] Add End
     sleep 15
     wait_for_device "fastbootd" 120 || die "Device did not enter fastbootd"
 }
@@ -510,12 +719,21 @@ wait_for_device() {
 
     local count=0
     while [[ ${count} -lt ${timeout} ]]; do
+        # SHARP_EXTEND [FlashTool] [PS11-FASTBOOTD] Mod Start
         local devices
         devices=$("${fb_cmd[@]}" devices 2>/dev/null || true)
-        if [[ -n "${devices}" ]]; then
-            log_success "Device detected"
-            return 0
+        if [[ "${mode}" == "fastbootd" ]]; then
+            if [[ -n "${devices}" ]] && device_in_fastbootd; then
+                log_success "Device detected in fastbootd mode"
+                return 0
+            fi
+        else
+            if [[ -n "${devices}" ]]; then
+                log_success "Device detected in fastboot mode"
+                return 0
+            fi
         fi
+        # SHARP_EXTEND [FlashTool] [PS11-FASTBOOTD] Mod End
         sleep 1
         count=$((count + 1))
     done
@@ -701,8 +919,9 @@ validate_environment() {
     log_info "Checking firmware images..."
 
     if [[ "${ROM_TYPE}" == "jenkins" ]]; then
-        # Jenkins ROM: only system, system_ext, pvmfw, and variant files needed
+        # Jenkins ROM: boot-critical + dynamic partitions and variant files.
         local jenkins_images=(
+            "${SCRIPT_DIR}/init_boot.img"
             "${SCRIPT_DIR}/system.img"
             "${SCRIPT_DIR}/system_ext-kira.img"
             "${SCRIPT_DIR}/pvmfw.img"
@@ -711,6 +930,7 @@ validate_environment() {
         for img in "${jenkins_images[@]}"; do
             if [[ ! -f "${img}" ]]; then
                 log_warn "Missing: ${img}"
+                missing=$((missing + 1))
             fi
         done
 
@@ -745,6 +965,13 @@ validate_environment() {
 
         if [[ ${missing} -gt 0 ]]; then
             log_fatal "${missing} critical image(s) missing. Ensure Jenkins firmware package is complete."
+        fi
+
+        local vbmeta_sys_path
+        vbmeta_sys_path="$(find_ps11_image_path "${vbmeta_sys_img}" || true)"
+        ROM_ANDROID_MAJOR="$(ps11_android_major_from_vbmeta "${vbmeta_sys_path}" || true)"
+        if [[ -z "${ROM_ANDROID_MAJOR}" ]]; then
+            log_fatal "Unable to detect Android version from ${vbmeta_sys_img}; refusing to guess vbmeta asset"
         fi
     else
         # Official ROM: all critical images required
@@ -805,7 +1032,13 @@ validate_environment() {
     echo -e "${BOLD}  │${NC}  Target Slot:  ${CYAN}${SLOT^^}${NC}                        ${BOLD}│${NC}"
     local fw_label="${ROM_TYPE} ($(basename "${SCRIPT_DIR}"))"
     echo -e "${BOLD}  │${NC}  Package:      ${CYAN}${fw_label}${NC}$(printf '%*s' $((26 - ${#fw_label})) '')${BOLD}│${NC}"
-    echo -e "${BOLD}  │${NC}  Android:      ${CYAN}16 (API 36)${NC}                ${BOLD}│${NC}"
+    local android_label="profile default"
+    if [[ -n "${ROM_ANDROID_MAJOR}" ]]; then
+        android_label="${ROM_ANDROID_MAJOR} (detected from vbmeta_system)"
+    fi
+    local android_padding=$((32 - ${#android_label}))
+    ((android_padding < 1)) && android_padding=1
+    echo -e "${BOLD}  │${NC}  Android:      ${CYAN}${android_label}${NC}$(printf '%*s' "${android_padding}" '')${BOLD}│${NC}"
     echo -e "${BOLD}  │${NC}  AVB Disabled: ${CYAN}${DISABLE_AVB}${NC}$(printf '%*s' $((22 - ${#DISABLE_AVB})) '')${BOLD}│${NC}"
     echo -e "${BOLD}  │${NC}  Wipe Data:    ${CYAN}${WIPE_USERDATA}${NC}$(printf '%*s' $((22 - ${#WIPE_USERDATA})) '')${BOLD}│${NC}"
     echo -e "${BOLD}  │${NC}  Dry Run:      ${CYAN}${DRY_RUN}${NC}$(printf '%*s' $((22 - ${#DRY_RUN})) '')${BOLD}│${NC}"
@@ -1081,20 +1314,13 @@ flash_official_finalize() {
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Jenkins ROM Flash Flow (partial ROM)
-# Jenkins ROM includes: system.img, system_ext-kira.img, pvmfw.img,
+# Jenkins ROM includes: init_boot.img, system.img, system_ext-kira.img, pvmfw.img,
 # variant/{product-*.img, vbmeta_system-*.img}
-# No bootloader, boot, init_boot, or radio firmware.
+# No bootloader, boot, or radio firmware.
 # ──────────────────────────────────────────────────────────────────────────────
 
 main_jenkins() {
     log_header "PS11 JENKINS ROM — PARTIAL FLASH"
-
-    local vbmeta
-    vbmeta="$(find_bundled_vbmeta)"
-    if [[ -z "$vbmeta" ]]; then
-        log_warn "vbmeta_verification_disabled.img not found — skipping vbmeta flash"
-        log_warn "Device may fail to boot due to AVB chain verification failure"
-    fi
 
     # Determine images
     local product_variant
@@ -1102,6 +1328,40 @@ main_jenkins() {
     local product_img="product-${product_variant}.img"
     local vbmeta_sys_img="vbmeta_system-${product_variant}.img"
     local system_ext_img="system_ext-kira.img"
+    local vbmeta_sys_path
+    vbmeta_sys_path="$(find_ps11_image_path "${vbmeta_sys_img}" || true)"
+
+    if [[ -z "${vbmeta_sys_path}" ]]; then
+        log_fatal "Unable to resolve ${vbmeta_sys_img} for OS-matched vbmeta selection"
+    fi
+
+    ROM_ANDROID_MAJOR="$(ps11_android_major_from_vbmeta "${vbmeta_sys_path}" || true)"
+    if [[ -z "${ROM_ANDROID_MAJOR}" ]]; then
+        log_fatal "Unable to detect Android version from ${vbmeta_sys_img}; refusing to guess vbmeta asset"
+    fi
+
+    # SHARP_EXTEND [FlashTool] [PS11-JENKINS-BOOT] Add Start
+    local jenkins_fingerprint
+    jenkins_fingerprint="$(ps11_fingerprint_from_vbmeta "${vbmeta_sys_path}")"
+    if [[ -z "${jenkins_fingerprint}" ]]; then
+        log_fatal "Unable to read build fingerprint from ${vbmeta_sys_img}; refusing Jenkins partial flash"
+    fi
+    # SHARP_EXTEND [FlashTool] [PS11-JENKINS-BOOT] Add End
+
+    local vbmeta=""
+    if [[ "${DISABLE_AVB}" == true ]]; then
+        vbmeta="$(find_jenkins_local_disabled_vbmeta "${ROM_ANDROID_MAJOR}")"
+        if [[ -z "${vbmeta}" ]]; then
+            log_fatal "AVB disable requested, but Jenkins ROM has no ROM-local vbmeta_verification_disabled.img matching PS11 Android ${ROM_ANDROID_MAJOR}; refusing to use a generic asset."
+        fi
+        log_warn "Using ROM-local vbmeta with verification disabled: ${vbmeta}"
+    else
+        log_info "AVB remains enabled; Preserving existing base vbmeta for this partial Jenkins flash"
+    fi
+
+    # SHARP_EXTEND [FlashTool] [PS11-JENKINS-BOOT] Add Start
+    validate_jenkins_base_compatibility "${jenkins_fingerprint}"
+    # SHARP_EXTEND [FlashTool] [PS11-JENKINS-BOOT] Add End
 
     # Show summary
     echo ""
@@ -1120,7 +1380,7 @@ main_jenkins() {
         echo ""
         log_warn "═══════════════════════════════════════════════════════════"
         log_warn "Jenkins ROM is a PARTIAL firmware package."
-        log_warn "Only system + system_ext + product + vbmeta are included."
+        log_warn "Only init_boot + pvmfw + system + system_ext + product + vbmeta are included."
         log_warn "Bootloader and radio firmware are NOT updated."
         log_warn "═══════════════════════════════════════════════════════════"
         echo ""
@@ -1140,9 +1400,11 @@ main_jenkins() {
 
     log_phase "1 — BOOTSTRAP (bootloader mode)"
     STEP=0
-    TOTAL_STEPS=3
+    TOTAL_STEPS=4
 
-    # Flash vbmeta with verity disabled to both slots
+    # Only replace root vbmeta when the user explicitly requested AVB disable.
+    # The default partial flow preserves the verified base vbmeta, matching the
+    # working Official-over-Jenkins hybrid workflow.
     if [[ -n "$vbmeta" ]]; then
         log_step "Flashing vbmeta with verification disabled (both slots)"
         local vb_errors=0
@@ -1162,6 +1424,11 @@ main_jenkins() {
             ERRORS=$((ERRORS + vb_errors))
         fi
     fi
+
+    # Flash boot-critical images before entering fastbootd. These images are
+    # referenced by vbmeta_system and must match the Jenkins dynamic payload.
+    flash_partition "init_boot_${SLOT}" "init_boot.img"
+    flash_partition "pvmfw_${SLOT}" "pvmfw.img"
 
     # Set active slot before fastbootd
     log_step "Setting active slot to ${BOLD}${SLOT}${NC}"
@@ -1226,6 +1493,12 @@ main_jenkins() {
     log_step "Rebooting device..."
     fb_exec reboot
 
+    # SHARP_EXTEND [FlashTool] [PS11-JENKINS-BOOT] Add Start
+    if ! verify_jenkins_boot "${jenkins_fingerprint}"; then
+        ERRORS=$((ERRORS + 1))
+    fi
+    # SHARP_EXTEND [FlashTool] [PS11-JENKINS-BOOT] Add End
+
     # Summary
     local end_time elapsed
     end_time=$(date +%s)
@@ -1245,6 +1518,11 @@ main_jenkins() {
         log_info "Device is rebooting. First boot may take 5-10 minutes."
     fi
     echo ""
+
+    if [[ ${ERRORS} -gt 0 ]]; then
+        return 1
+    fi
+    return 0
 }
 
 
@@ -1259,7 +1537,7 @@ main() {
     detect_rom_type
     echo -e "${DIM}  ROM type:  ${ROM_TYPE}${NC}"
     echo -e "${DIM}  Firmware:  $(basename "${SCRIPT_DIR}")${NC}"
-    echo -e "${DIM}  Script:    $(basename "$0") v1.2.4${NC}"
+    echo -e "${DIM}  Script:    $(basename "$0") v1.3.3${NC}"
     echo -e "${DIM}  Date:      $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 
     # Validate (uses ROM_TYPE to decide which images are required)
@@ -1273,7 +1551,7 @@ main() {
     # Dispatch to Jenkins flow if detected
     if [[ "${ROM_TYPE}" == "jenkins" ]]; then
         main_jenkins
-        return
+        return $?
     fi
 
     # ── Official flow below ──

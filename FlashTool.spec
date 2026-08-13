@@ -6,12 +6,23 @@ import os
 
 block_cipher = None
 
+# Keep the asset contract in one place.  E9/E10 are included automatically
+# when their exact model assets are supplied; they must never fall back to
+# another model's vbmeta image.
+ROM_ASSET_PROFILES = ('e9', 'e10', 'e11', 'ps10', 'ps11')
+ROM_ASSET_DATA = [
+    (os.path.join('assets', profile), os.path.join('assets', profile))
+    for profile in ROM_ASSET_PROFILES
+    if os.path.isdir(os.path.join('assets', profile))
+]
+
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
     datas=[
         ('assets/icon.png', 'assets'),
+        *ROM_ASSET_DATA,
         ('flash_ps10.sh', '.'),
         ('flash_ps11.sh', '.'),
         ('flash_e11.sh', '.'),

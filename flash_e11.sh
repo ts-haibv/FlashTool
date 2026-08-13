@@ -298,7 +298,7 @@ detect_rom_type() {
 # Looks in: deb-installed assets dir → SCRIPT_ABS (bundled _MEIPASS or app dir).
 find_bundled_vbmeta() {
   local deb_dir="/usr/share/FlashTool/assets/e11"
-  for dir in "$deb_dir" "$SCRIPT_ABS"; do
+  for dir in "$deb_dir" "$SCRIPT_ABS/assets/e11" "$SCRIPT_ABS" "$SCRIPT_DIR"; do
     for name in vbmeta_verification_disabled.img vbmeta.img; do
       [[ -f "$dir/$name" ]] && echo "$dir/$name" && return 0
     done
@@ -460,8 +460,7 @@ main_jenkins() {
 
   local vbmeta; vbmeta="$(find_bundled_vbmeta)"
   if [[ -z "$vbmeta" ]]; then
-    echo "WARNING: vbmeta_verification_disabled.img not found — skipping vbmeta flash" >&2
-    echo "WARNING: device may fail to boot due to AVB chain verification failure" >&2
+    die "Missing bundled vbmeta_verification_disabled.img for E11 Jenkins flash"
   fi
 
   [[ -d "$model_dir" ]] || die "Missing model folder: $model_dir"

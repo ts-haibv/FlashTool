@@ -121,6 +121,6 @@ def get_clean_env() -> dict[str, str]:
 
 # ── App Info ────────────────────────────────────────────────────────────────
 APP_NAME = "FlashTool"
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.3.3"
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 750

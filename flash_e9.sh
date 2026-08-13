@@ -316,7 +316,7 @@ detect_rom_type() {
 # Find bundled vbmeta_verification_disabled.img for Jenkins mode.
 find_bundled_vbmeta() {
   local deb_dir="/usr/share/FlashTool/assets/e9"
-  for dir in "$deb_dir" "$SCRIPT_ABS"; do
+  for dir in "$deb_dir" "$SCRIPT_ABS/assets/e9" "$SCRIPT_ABS" "$SCRIPT_DIR"; do
     for name in vbmeta_verification_disabled.img vbmeta.img; do
       [[ -f "$dir/$name" ]] && echo "$dir/$name" && return 0
     done
@@ -488,11 +488,12 @@ main_jenkins() {
 
   local vbmeta; vbmeta="$(find_bundled_vbmeta)"
   if [[ -z "$vbmeta" ]]; then
-    echo "WARNING: vbmeta_verification_disabled.img not found — skipping vbmeta flash" >&2
-    echo "WARNING: device may fail to boot due to AVB chain verification failure" >&2
+    die "Missing bundled vbmeta_verification_disabled.img for E9 Jenkins flash"
   fi
 
   [[ -d "$model_dir" ]] || die "Missing model folder: $model_dir"
+  require_file "$SCRIPT_DIR/init_boot.img"
+  require_file "$SCRIPT_DIR/pvmfw.img"
   require_file "$SCRIPT_DIR/system.img"
 
   local system_ext_file; system_ext_file="$(find_system_ext)"
@@ -503,6 +504,12 @@ main_jenkins() {
     "$model_dir/product-${model_lower}t.img" \
     "$SCRIPT_DIR/$BASE_MODEL/product-$base_lower.img")"
   [[ -n "$product_file" ]] || die "Missing product image for $MODEL in $model_dir"
+
+  local vbmeta_sys; vbmeta_sys="$(first_existing \
+    "$model_dir/vbmeta_system-$model_lower.img" \
+    "$model_dir/vbmeta_system-${model_lower}t.img" \
+    "$SCRIPT_DIR/$BASE_MODEL/vbmeta_system-$base_lower.img")"
+  [[ -n "$vbmeta_sys" ]] || die "Missing vbmeta_system image for $MODEL in $model_dir"
 
   confirm_flash
   enter_bootloader
@@ -545,13 +552,7 @@ main_jenkins() {
   wait_for_fastboot_device || die "Device did not return to bootloader."
 
   log "Flash bootloader and boot-slot partitions"
-  local vbmeta_sys; vbmeta_sys="$(first_existing \
-    "$model_dir/vbmeta_system-$model_lower.img" \
-    "$model_dir/vbmeta_system-${model_lower}t.img" \
-    "$SCRIPT_DIR/$BASE_MODEL/vbmeta_system-$base_lower.img")"
-  if [[ -n "$vbmeta_sys" && -f "$vbmeta_sys" ]]; then
-    flash_slot_if_exists vbmeta_system "$vbmeta_sys"
-  fi
+  flash_slot_if_exists vbmeta_system "$vbmeta_sys"
 
   log "Set active slot $TARGET_SLOT"
   run_fastboot --set-active="$TARGET_SLOT"

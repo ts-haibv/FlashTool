@@ -39,10 +39,34 @@ The spec file defines:
 | Setting | Value |
 |---------|-------|
 | Entry script | `main.py` |
-| Bundled data | `assets/icon.png`, `flash_ps11.sh`, `flash_e11.sh`, `flash_e10.sh` |
+| Bundled data | `assets/icon.png`, existing `assets/{e9,e10,e11,ps10,ps11}`, all flash scripts |
 | Hidden imports | All `flash_tool` submodules + `customtkinter` |
 | Console | `False` (GUI app, no terminal window) |
 | Icon | `assets/icon.png` |
+
+Jenkins flashing requires an exact, OS-matched profile asset. For PS11 Jenkins,
+the default flow preserves the root `vbmeta`, `boot`, and `vendor_boot` from the
+existing Official base; it must not substitute a generic bundled vbmeta image.
+The `--disable-avb` override is accepted only when the selected Jenkins ROM
+contains its own valid `vbmeta_verification_disabled.img`. E9/E10 must receive
+their own verified image and never inherit one from another profile. For PS11
+Jenkins, `init_boot.img` and `pvmfw.img` are boot-critical and are flashed
+before fastbootd. Flashing stops if the OS version cannot be read, the current
+base cannot be verified over ADB, or another core Jenkins image is missing.
+No PS11 disabled-root asset is bundled until one is verified for the target OS;
+the explicit override fails closed when the ROM-local asset is absent or its
+fingerprint does not match the selected Android major version.
+The PS11 wait loop treats `fastboot devices` as enumeration only; dynamic
+partition flashing starts only after `fastboot getvar is-userspace` reports
+`yes`. A USB timeout while requesting `reboot fastboot` is treated as a mode
+transition only when the subsequent fastbootd check succeeds.
+Before a Jenkins flash, the tool reads the current Android fingerprint over ADB
+and requires the same PS11 family and Android major version. A build ID
+difference such as Jenkins A8110 on an Official A8070 base is allowed and
+reported as a warning because the existing Official boot/vendor_boot/root
+vbmeta remain in place. After reboot, it waits for ADB and verifies the booted
+fingerprint; returning to the bootloader is reported as a failed flash instead
+of a successful completion.
 
 ### Build Command
 
@@ -169,9 +193,9 @@ The CI `.deb` build mirrors `scripts/build_linux.sh` with these fields:
 
 ## Release Checklist
 
-- [ ] Version bumped in `flash_tool/config.py` (`APP_VERSION`)
-- [ ] Version bumped in `scripts/build_linux.sh` (`APP_VERSION`)
-- [ ] Version bumped in `scripts/build_windows.bat` (`AppVersion`)
+- [x] Version bumped in `flash_tool/config.py` (`APP_VERSION`)
+- [x] Version bumped in `scripts/build_linux.sh` (`APP_VERSION`)
+- [x] Version bumped in `scripts/build_windows.bat` (`AppVersion`)
 - [ ] `FlashTool.spec` hiddenimports cover any new modules
 - [ ] New device scripts added to `FlashTool.spec` `datas` list if applicable
 - [ ] README.md updated with new device or feature notes

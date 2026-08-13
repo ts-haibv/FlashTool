@@ -270,7 +270,7 @@ detect_rom_type() {
 # Find bundled vbmeta_verification_disabled.img for Jenkins mode.
 find_bundled_vbmeta() {
   local deb_dir="/usr/share/FlashTool/assets/e10"
-  for dir in "$deb_dir" "$SCRIPT_ABS"; do
+  for dir in "$deb_dir" "$SCRIPT_ABS/assets/e10" "$SCRIPT_ABS" "$SCRIPT_DIR"; do
     for name in vbmeta_verification_disabled.img vbmeta.img; do
       [[ -f "$dir/$name" ]] && echo "$dir/$name" && return 0
     done
@@ -420,8 +420,7 @@ main_jenkins() {
 
   local vbmeta; vbmeta="$(find_bundled_vbmeta)"
   if [[ -z "$vbmeta" ]]; then
-    echo "WARNING: vbmeta_verification_disabled.img not found — skipping vbmeta flash" >&2
-    echo "WARNING: device may fail to boot due to AVB chain verification failure" >&2
+    die "Missing bundled vbmeta_verification_disabled.img for E10 Jenkins flash"
   fi
 
   [[ -d "$model_dir" ]] || die "Missing model folder: $model_dir"

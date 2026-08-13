@@ -1,4 +1,4 @@
 """FlashTool - Cross-platform ROM Flashing Application for G6 devices."""
 
-__version__ = "1.3.1"
+__version__ = "1.3.3"
 __app_name__ = "FlashTool"

@@ -76,10 +76,17 @@ jobs:
           mkdir -p "$DEB_ROOT/usr/bin"
           mkdir -p "$DEB_ROOT/usr/share/applications"
           mkdir -p "$DEB_ROOT/usr/share/pixmaps"
+          mkdir -p "$DEB_ROOT/usr/share/FlashTool/assets"
           
           cp "dist/${{ matrix.asset_name }}" "$DEB_ROOT/usr/bin/flashtool"
           chmod 755 "$DEB_ROOT/usr/bin/flashtool"
           cp "assets/icon.png" "$DEB_ROOT/usr/share/pixmaps/flashtool.png"
+          for profile in e9 e10 e11 ps10 ps11; do
+            mkdir -p "$DEB_ROOT/usr/share/FlashTool/assets/$profile"
+            if [ -d "assets/$profile" ]; then
+              cp -r "assets/$profile/." "$DEB_ROOT/usr/share/FlashTool/assets/$profile/"
+            fi
+          done
           
           cat > "$DEB_ROOT/DEBIAN/control" << EOF
           Package: flashtool

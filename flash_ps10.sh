@@ -133,7 +133,7 @@ detect_rom_type() {
 # Looks in: deb-installed assets dir → SCRIPT_DIR.
 find_bundled_vbmeta() {
     local deb_dir="/usr/share/FlashTool/assets/ps10"
-    for dir in "$deb_dir" "$SCRIPT_ABS" "$SCRIPT_DIR"; do
+    for dir in "$deb_dir" "$SCRIPT_ABS/assets/ps10" "$SCRIPT_ABS" "$SCRIPT_DIR"; do
         for name in vbmeta_verification_disabled.img vbmeta.img; do
             if [[ -f "$dir/$name" ]]; then
                 echo "$dir/$name" && return 0
@@ -756,6 +756,7 @@ validate_environment() {
         for img in "${jenkins_images[@]}"; do
             if [[ ! -f "${img}" ]]; then
                 log_warn "Missing: ${img}"
+                missing=$((missing + 1))
             fi
         done
 
@@ -1121,8 +1122,7 @@ main_jenkins() {
     local vbmeta
     vbmeta="$(find_bundled_vbmeta)"
     if [[ -z "$vbmeta" ]]; then
-        log_warn "vbmeta_verification_disabled.img not found — skipping vbmeta flash"
-        log_warn "Device may fail to boot due to AVB chain verification failure"
+        log_fatal "Missing bundled vbmeta_verification_disabled.img for PS10 Jenkins flash"
     fi
 
     # Determine images
